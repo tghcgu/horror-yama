@@ -1,0 +1,2 @@
+# Godot の標準に合わせて、改行は LF にそろえる
+* text=auto eol=lf

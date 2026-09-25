@@ -1,0 +1,38 @@
+[gd_scene format=3]
+
+[ext_resource type="Script" path="res://scripts/main.gd" id="1_main"]
+[ext_resource type="Script" path="res://scripts/day_cycle.gd" id="2_day"]
+[ext_resource type="Script" path="res://scripts/terrain.gd" id="3_terrain"]
+[ext_resource type="PackedScene" path="res://scenes/player.tscn" id="4_player"]
+[ext_resource type="Script" path="res://scripts/stalker.gd" id="5_stalker"]
+[ext_resource type="Script" path="res://scripts/hud.gd" id="6_hud"]
+[ext_resource type="Script" path="res://scripts/wind_audio.gd" id="7_wind"]
+
+[node name="Main" type="Node3D"]
+script = ExtResource("1_main")
+
+[node name="DayCycle" type="Node" parent="."]
+script = ExtResource("2_day")
+
+[node name="Terrain" type="Node3D" parent="."]
+script = ExtResource("3_terrain")
+
+[node name="Player" parent="." instance=ExtResource("4_player")]
+
+[node name="Stalker" type="Node3D" parent="."]
+script = ExtResource("5_stalker")
+
+[node name="HUD" type="CanvasLayer" parent="."]
+
+[node name="Overlay" type="Control" parent="HUD"]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
+script = ExtResource("6_hud")
+
+[node name="Wind" type="AudioStreamPlayer" parent="."]
+script = ExtResource("7_wind")
