@@ -12,6 +12,7 @@ var _grip: AudioStreamPlayer
 var _breath: AudioStreamPlayer
 var _pickup: AudioStreamPlayer
 var _item: AudioStreamPlayer
+var _bell: AudioStreamPlayer
 
 
 func _ready() -> void:
@@ -23,6 +24,15 @@ func _ready() -> void:
 	_pickup = _make_player(Sfx.chime(), -10.0)
 	_item = _make_player(Sfx.rustle(), -6.0)
 	_breath.play()
+
+
+func set_bell(on: bool) -> void:
+	if _bell == null:
+		_bell = _make_player(Sfx.bell(), -8.0)
+	if on:
+		_bell.play()
+	else:
+		_bell.stop()
 
 
 func play_grip() -> void:

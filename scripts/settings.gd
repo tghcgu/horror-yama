@@ -14,6 +14,9 @@ var fov := 80.0
 var brightness := 1.0         # 画面の明るさ（露出の倍率）
 var volume := 0.8             # 0〜1
 var retro := 2                # 画面の粗さ（RETRO_NAMES の番号）
+var hat_color := 0            # 見た目の色（Appearance.COLORS の番号）
+var jacket_color := 1
+var scarf_color := 3
 var fullscreen := false
 
 
@@ -41,6 +44,8 @@ func save() -> void:
 	config.set_value(SECTION, "brightness", brightness)
 	config.set_value(SECTION, "volume", volume)
 	config.set_value(SECTION, "retro", retro)
+	for part in Appearance.PARTS:
+		config.set_value(SECTION, part + "_color", get(part + "_color"))
 	config.set_value(SECTION, "fullscreen", fullscreen)
 	config.save(PATH)
 
@@ -54,4 +59,6 @@ func _load() -> void:
 	brightness = config.get_value(SECTION, "brightness", brightness)
 	volume = config.get_value(SECTION, "volume", volume)
 	retro = config.get_value(SECTION, "retro", retro)
+	for part in Appearance.PARTS:
+		set(part + "_color", config.get_value(SECTION, part + "_color", get(part + "_color")))
 	fullscreen = config.get_value(SECTION, "fullscreen", fullscreen)

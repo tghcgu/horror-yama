@@ -30,6 +30,7 @@ var _touch: AudioStreamPlayer
 
 
 func _ready() -> void:
+	add_to_group(&"spirits")
 	_build()
 	_whisper = AudioStreamPlayer3D.new()
 	_whisper.stream = Sfx.whisper()
@@ -53,7 +54,7 @@ func appear_near() -> bool:
 		var x := player.global_position.x + cos(angle) * distance
 		var z := player.global_position.z + sin(angle) * distance
 		var y := terrain.height_at(x, z)
-		if Biomes.at(y) != Biomes.Id.SNOW:
+		if Biomes.at(Vector3(x, y, z)) != Biomes.Id.SNOW:
 			continue
 		global_position = Vector3(x, y, z)
 		if _is_seen():
@@ -87,6 +88,13 @@ func vanish() -> void:
 	visible = false
 	_whisper.stop()
 	cooldown = COOLDOWN
+
+
+## 塩で清められた：しばらく現れない
+func purify() -> void:
+	if active:
+		vanish()
+		cooldown = COOLDOWN * 3.0
 
 
 func _physics_process(delta: float) -> void:

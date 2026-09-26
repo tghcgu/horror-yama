@@ -12,8 +12,7 @@ const REACH_TIME := 0.13
 const REACH_LIFT := 0.1        # つかみ直すとき、壁から浮かせる量
 const FOLLOW_SPEED := 18.0
 const MAX_TREMBLE := 0.018
-const SLEEVE_COLOR := Color(0.13, 0.15, 0.2)
-const GLOVE_COLOR := Color(0.1, 0.09, 0.08)
+
 const HANDS_LAYER := 2  # ヘッドライトでは照らさず、専用の弱いライトで照らす（近すぎて白飛びするため）
 
 # カメラから見た手の位置。x は右手の値（左手は符号を反転する）
@@ -35,6 +34,8 @@ class Hand:
 
 
 var _player: Player
+var _mitten_material: StandardMaterial3D
+var _sleeve_material: StandardMaterial3D
 var _camera: Camera3D
 var _hands: Array = []
 var _time := 0.0
@@ -44,14 +45,24 @@ var _noise := FastNoiseLite.new()
 func _ready() -> void:
 	_player = get_parent() as Player
 	_camera = _player.get_node("Head/Camera3D") as Camera3D
-	var glove := _material(GLOVE_COLOR)
-	var sleeve := _material(SLEEVE_COLOR)
+	_mitten_material = _material(Color.WHITE)
+	_sleeve_material = _material(Color.WHITE)
+	var glove := _mitten_material
+	var sleeve := _sleeve_material
+	Settings.changed.connect(_apply_colors)
+	_apply_colors()
 	for side in [-1.0, 1.0]:
 		var hand := Hand.new()
 		hand.side = side
 		hand.root = _build_hand(glove, side)
 		hand.arm = _build_arm(sleeve)
 		_hands.append(hand)
+
+
+## 手は、鏡の前で選んだ色のミトン（帽子と同じ色）と、上着の袖
+func _apply_colors() -> void:
+	_mitten_material.albedo_color = Appearance.color_of("hat")
+	_sleeve_material.albedo_color = Appearance.color_of("jacket").darkened(0.15)
 
 
 func _process(delta: float) -> void:
@@ -166,10 +177,9 @@ func _build_hand(material: Material, side: float) -> Node3D:
 	var root := Node3D.new()
 	add_child(root)
 	root.top_level = true
-	_add_box(root, Vector3(0.07, 0.075, 0.028), material, Vector3.ZERO, Vector3.ZERO)
-	# 指は岩のほうへ少し曲げる
-	_add_box(root, Vector3(0.066, 0.06, 0.024), material, Vector3(0.0, 0.064, -0.011), Vector3(-0.5, 0.0, 0.0))
-	_add_box(root, Vector3(0.02, 0.045, 0.02), material, Vector3(-0.042 * side, 0.0, -0.012), Vector3(0.0, 0.0, 0.6 * side))
+	# 丸いミトンと、ちょこんと出た親指
+	_add_sphere(root, 0.05, Vector3(1.0, 1.25, 0.6), material, Vector3(0.0, 0.03, -0.005))
+	_add_sphere(root, 0.02, Vector3(1.0, 1.4, 0.9), material, Vector3(-0.045 * side, 0.0, -0.01))
 	return root
 
 
@@ -178,7 +188,7 @@ func _build_arm(material: Material) -> Node3D:
 	add_child(arm)
 	arm.top_level = true
 	var sleeve := CapsuleMesh.new()
-	sleeve.radius = 0.03
+	sleeve.radius = 0.042
 	sleeve.height = 1.0
 	sleeve.material = material
 	var mesh := MeshInstance3D.new()
@@ -190,14 +200,17 @@ func _build_arm(material: Material) -> Node3D:
 	return arm
 
 
-func _add_box(parent: Node3D, box_size: Vector3, material: Material, pos: Vector3, rot: Vector3) -> void:
-	var box := BoxMesh.new()
-	box.size = box_size
-	box.material = material
+func _add_sphere(parent: Node3D, radius: float, sphere_scale: Vector3, material: Material, pos: Vector3) -> void:
+	var sphere := SphereMesh.new()
+	sphere.radius = radius
+	sphere.height = radius * 2.0
+	sphere.radial_segments = 10
+	sphere.rings = 6
+	sphere.material = material
 	var mesh := MeshInstance3D.new()
-	mesh.mesh = box
+	mesh.mesh = sphere
 	mesh.position = pos
-	mesh.rotation = rot
+	mesh.scale = sphere_scale
 	mesh.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	mesh.layers = HANDS_LAYER
 	parent.add_child(mesh)

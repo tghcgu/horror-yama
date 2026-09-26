@@ -10,10 +10,16 @@ const KEY_BINDINGS := {
 	"sprint": KEY_SHIFT,
 	"toggle_lamp": KEY_F,
 	"restart": KEY_R,
+	"interact": KEY_E,
+	"throw": KEY_Q,
+	"fly": KEY_F1,
+	"fly_down": KEY_CTRL,
 	"item_1": KEY_1,
 	"item_2": KEY_2,
 	"item_3": KEY_3,
 	"item_4": KEY_4,
+	"item_5": KEY_5,
+	"item_6": KEY_6,
 }
 
 
@@ -26,6 +32,9 @@ func _enter_tree() -> void:
 	var click := InputEventMouseButton.new()
 	click.button_index = MOUSE_BUTTON_LEFT
 	_add("grab", click)
+	var right_click := InputEventMouseButton.new()
+	right_click.button_index = MOUSE_BUTTON_RIGHT
+	_add("use_item", right_click)
 
 
 func _add(action: String, event: InputEvent) -> void:

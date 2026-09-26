@@ -26,6 +26,7 @@ var _hiss: AudioStreamPlayer3D
 
 
 func _ready() -> void:
+	add_to_group(&"creatures")
 	var skin := CreatureKit.skin(Color.WHITE, Color(0.55, 0.2, 0.15), 0.15, 0.75)
 	var model := CreatureKit.load_model(MODEL, skin, {
 		"Eye": CreatureKit.glow(Color(1.0, 0.12, 0.08), 8.0),
@@ -69,11 +70,17 @@ func _physics_process(delta: float) -> void:
 			_orient(offset, 1.0 - exp(-4.0 * delta))
 			_moving = true
 
-	if player.state == Player.State.CLIMB and not player.frozen and _cooldown <= 0.0 and to_player.length() < BITE_DISTANCE:
+	if player.state == Player.State.CLIMB and not player.frozen and _cooldown <= 0.0 and to_player.length() < BITE_DISTANCE 			and not player.bell_ringing:  # 熊よけの鈴が鳴っていると、寄ってこない
 		_cooldown = BITE_COOLDOWN
 		_hiss.pitch_scale = randf_range(0.9, 1.2)
 		_hiss.play()
 		player.bitten(BITE_INJURY)
+
+
+## 爆竹の音に驚いて、しばらく噛みつかずに壁の上を逃げ回る
+func scare(_from: Vector3) -> void:
+	_cooldown = 12.0
+	_goal = _pick_goal()
 
 
 ## 這うときは脚を交互に持ち上げ、警戒中は前脚を振り上げて震わせ、牙をかちかち鳴らす

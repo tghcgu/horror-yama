@@ -56,8 +56,44 @@ static func flat(color: Color, roughness := 0.8) -> StandardMaterial3D:
 	return material
 
 
+## 湯気・胞子・雪煙などの、ふわっとした丸い煙の粒の素材（いつもこちらを向く板に、ぼかした丸を貼る）
+static func puff_material(color: Color) -> StandardMaterial3D:
+	return Shared.get_or_make("puff/%s" % color.to_html(), func() -> StandardMaterial3D:
+		var gradient := Gradient.new()
+		gradient.set_color(0, Color(1.0, 1.0, 1.0, 1.0))
+		gradient.set_color(1, Color(1.0, 1.0, 1.0, 0.0))
+		var texture := GradientTexture2D.new()
+		texture.gradient = gradient
+		texture.fill = GradientTexture2D.FILL_RADIAL
+		texture.fill_from = Vector2(0.5, 0.5)
+		texture.fill_to = Vector2(1.0, 0.5)
+		texture.width = 16  # 粗い丸（PS1 らしく、少しカクついた輪郭）
+		texture.height = 16
+		var material := StandardMaterial3D.new()
+		material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+		material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+		material.billboard_mode = BaseMaterial3D.BILLBOARD_PARTICLES
+		material.albedo_texture = texture
+		material.albedo_color = color
+		material.texture_filter = BaseMaterial3D.TEXTURE_FILTER_NEAREST
+		material.vertex_color_use_as_albedo = true
+		return material)
+
+
+## 粒が生まれてから消えるまでに、ふわっと薄れていく色の変化
+static func fade_ramp() -> Gradient:
+	return Shared.get_or_make("fade_ramp", func() -> Gradient:
+		var gradient := Gradient.new()
+		gradient.set_color(0, Color(1.0, 1.0, 1.0, 0.0))
+		gradient.set_color(1, Color(1.0, 1.0, 1.0, 0.0))
+		gradient.add_point(0.15, Color(1.0, 1.0, 1.0, 1.0))
+		gradient.add_point(0.6, Color(1.0, 1.0, 1.0, 0.7))
+		return gradient)
+
+
 static func part(parent: Node3D, mesh: PrimitiveMesh, material: Material, pos := Vector3.ZERO,
 		rot := Vector3.ZERO, part_scale := Vector3.ONE) -> MeshInstance3D:
+	coarsen(mesh)
 	mesh.material = material
 	var instance := MeshInstance3D.new()
 	instance.mesh = mesh
@@ -72,4 +108,26 @@ static func sphere(radius: float) -> SphereMesh:
 	var mesh := SphereMesh.new()
 	mesh.radius = radius
 	mesh.height = radius * 2.0
+	mesh.radial_segments = 12
+	mesh.rings = 6
 	return mesh
+
+
+## 既定の細かさのままの形を、PS1 らしい粗さに落とす（すでに粗くしてある形はそのまま）
+static func coarsen(mesh: PrimitiveMesh) -> void:
+	if mesh is SphereMesh:
+		var sphere_mesh := mesh as SphereMesh
+		sphere_mesh.radial_segments = mini(sphere_mesh.radial_segments, 12)
+		sphere_mesh.rings = mini(sphere_mesh.rings, 6)
+	elif mesh is CylinderMesh:
+		var cylinder := mesh as CylinderMesh
+		cylinder.radial_segments = mini(cylinder.radial_segments, 12)
+		cylinder.rings = mini(cylinder.rings, 1)
+	elif mesh is CapsuleMesh:
+		var capsule := mesh as CapsuleMesh
+		capsule.radial_segments = mini(capsule.radial_segments, 12)
+		capsule.rings = mini(capsule.rings, 4)
+	elif mesh is TorusMesh:
+		var torus := mesh as TorusMesh
+		torus.rings = mini(torus.rings, 16)
+		torus.ring_segments = mini(torus.ring_segments, 8)

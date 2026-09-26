@@ -4,17 +4,18 @@ extends Node3D
 
 const RADIUS := 6.0
 const LIFETIME := 40.0
-const GROUP := &"wards"
+const GROUP := &"wards"  # 化け物を寄せつけないもの（お札と、火のついたたき火）。どれも radius を持つ
 
+var radius := RADIUS
 var _time_left := LIFETIME
 var _light: OmniLight3D
 var _ring_material: StandardMaterial3D
 
 
-## point が、どれかのお札の円の中にあるか
+## point が、お札や火のついたたき火に守られた円の中にあるか
 static func blocks(tree: SceneTree, point: Vector3) -> bool:
 	for ward: Node3D in tree.get_nodes_in_group(GROUP):
-		if ward.global_position.distance_to(point) < RADIUS:
+		if ward.global_position.distance_to(point) < float(ward.get("radius")):
 			return true
 	return false
 

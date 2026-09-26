@@ -4,6 +4,7 @@ extends Node3D
 
 var player: Player
 var day: DayCycle
+var enabled := true  # ロビーやバスの中では降らせない
 
 var _snow: GPUParticles3D
 var _flake_material: StandardMaterial3D
@@ -45,6 +46,6 @@ func _process(_delta: float) -> void:
 	if player == null:
 		return
 	global_position = player.global_position + Vector3.UP * 4.0
-	_snow.emitting = Biomes.at(player.global_position.y) == Biomes.Id.SNOW
+	_snow.emitting = enabled and Biomes.at(player.global_position) == Biomes.Id.SNOW
 	var darkness := day.darkness if day else 0.0
 	_flake_material.albedo_color.a = lerpf(0.6, 0.15, darkness)

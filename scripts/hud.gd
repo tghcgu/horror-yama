@@ -6,11 +6,21 @@ extends Control
 const SLOT_SIZE := 60.0
 const SLOT_GAP := 10.0
 const HINT_TIME := 10.0
+const INJURY_COLOR := Color(0.7, 0.1, 0.1)
+const HUNGER_COLOR := Color(0.72, 0.42, 0.12)
+const COLD_COLOR := Color(0.35, 0.55, 0.9)
+const NOTICE_TIME := 2.5
+const EFFECT_NAMES := {
+	"warmer": "ぽかぽか", "chalk": "チョーク", "crampons": "アイゼン", "compass": "方位磁石",
+	"poison": "毒", "vision": "幻覚", "spores": "胞子",
+}
 
 var player: Player
 var day: DayCycle
 var summit_height := 100.0
 var danger := 0.0
+var in_lobby := false  # ホテルのロビーにいる（時間が止まっている）
+var mirror_hint := false  # 鏡の前にいる（身だしなみを整えられる）
 
 var _message := ""
 var _message_time := 0.0
@@ -22,10 +32,23 @@ var _cold_flash := 0.0
 var _fade := 0.0
 var _fade_target := 0.0
 var _time := 0.0
+var _notice := ""
+var _notice_time := 0.0
+var _icons: ItemIcons
+
+
+func _ready() -> void:
+	_icons = ItemIcons.new()
+	add_child(_icons)
 
 
 static func format_time(seconds: float) -> String:
 	return "%d:%02d" % [floori(seconds / 60.0), int(seconds) % 60]
+
+
+func clear_message() -> void:
+	_message_time = 0.0
+	_title_time = 0.0
 
 
 func show_message(text: String, seconds: float) -> void:
@@ -37,6 +60,12 @@ func show_message(text: String, seconds: float) -> void:
 func show_title(text: String) -> void:
 	_title = text
 	_title_time = 4.0
+
+
+## アイテム欄の上に、小さく知らせる（「持ち物がいっぱい」など）
+func show_notice(text: String) -> void:
+	_notice = text
+	_notice_time = NOTICE_TIME
 
 
 func show_hint() -> void:
@@ -60,6 +89,7 @@ func _process(delta: float) -> void:
 	_message_time = maxf(_message_time - delta, 0.0)
 	_title_time = maxf(_title_time - delta, 0.0)
 	_hint_time = maxf(_hint_time - delta, 0.0)
+	_notice_time = maxf(_notice_time - delta, 0.0)
 	_hurt_flash = maxf(_hurt_flash - delta * 2.0, 0.0)
 	_cold_flash = maxf(_cold_flash - delta * 0.8, 0.0)
 	_fade = move_toward(_fade, _fade_target, delta * 2.0)
@@ -71,12 +101,28 @@ func _draw() -> void:
 		return
 	var font := get_theme_default_font()
 	var screen := size
+	_draw_conditions(screen)
 	_draw_danger(screen)
 	_draw_crosshair(screen / 2.0)
 	_draw_stamina(font, Rect2(40.0, screen.y - 56.0, 340.0, 18.0))
 	_draw_status(font, screen)
-	_draw_hotbar(font, screen)
+	if not in_lobby:
+		_draw_hotbar(font, screen)
+		_draw_effects(font, screen)
+		_draw_compass(font, screen)
 	_draw_title(font, screen)
+	var hint := player.aim_hint()
+	if hint != "":
+		draw_string(font, Vector2(0.0, screen.y * 0.5 + 40.0), hint, HORIZONTAL_ALIGNMENT_CENTER, screen.x, 16, Color(1, 1, 1, 0.85))
+	if player.flying:
+		draw_string(font, Vector2(0.0, 76.0), "飛行モード（テスト用）　F1 でやめる　Space 上昇・Ctrl 下降・Shift 速く",
+			HORIZONTAL_ALIGNMENT_CENTER, screen.x, 16, Color(0.6, 0.9, 1.0, 0.85))
+	if player.held_by:
+		draw_string(font, Vector2(0.0, screen.y * 0.5 + 64.0), "Space を連打して振りほどく", HORIZONTAL_ALIGNMENT_CENTER, screen.x, 16,
+			Color(1.0, 0.6, 0.5, 0.6 + 0.3 * sin(_time * 10.0)))
+	if _notice_time > 0.0:
+		draw_string(font, Vector2(0.0, screen.y - SLOT_SIZE - 110.0), _notice, HORIZONTAL_ALIGNMENT_CENTER, screen.x, 16,
+			Color(1.0, 0.95, 0.85, clampf(_notice_time, 0.0, 1.0)))
 
 	if player.clipped:
 		draw_string(font, Vector2(0.0, screen.y - 104.0), "ハーケンで休憩中　（動くと外れる）",
@@ -128,57 +174,110 @@ func _draw_stamina(font: Font, bar: Rect2) -> void:
 	elif player.boost_time > 0.0:
 		color = Color(0.7, 0.95, 0.45)  # おにぎりの効果中
 	draw_rect(Rect2(bar.position, Vector2(player.stamina * per_point, bar.size.y)), color)
-	var injury_width := player.injury * per_point
-	if injury_width > 0.0:
-		draw_rect(Rect2(bar.end.x - injury_width, bar.position.y, injury_width, bar.size.y), Color(0.7, 0.1, 0.1))
+	# 右端から、上限を削っている不調を積んでいく（PEAK と同じ見せ方）
+	var right := bar.end.x
+	for affliction: Array in [[player.injury, "ケガ", INJURY_COLOR], [player.hunger, "空腹", HUNGER_COLOR], [player.cold, "寒さ", COLD_COLOR]]:
+		var width: float = affliction[0] * per_point
+		if width <= 0.5:
+			continue
+		right -= width
+		draw_rect(Rect2(right, bar.position.y, width, bar.size.y), affliction[2])
+		if width > 34.0:
+			draw_string(font, Vector2(right, bar.end.y + 18.0), affliction[1], HORIZONTAL_ALIGNMENT_CENTER, width, 16, affliction[2].lightened(0.3))
 	draw_string(font, bar.position + Vector2(0.0, -8.0), "スタミナ", HORIZONTAL_ALIGNMENT_LEFT, -1, 16, Color(1, 1, 1, 0.8))
 
 
 func _draw_status(font: Font, screen: Vector2) -> void:
+	if in_lobby:
+		draw_string(font, Vector2(0.0, 44.0), "玄関の外のバスに乗ると、山へ出発する", HORIZONTAL_ALIGNMENT_CENTER, screen.x, 16, Color(1, 1, 1, 0.55))
+		if mirror_hint:
+			draw_string(font, Vector2(0.0, screen.y * 0.5 + 90.0), "E：身だしなみ", HORIZONTAL_ALIGNMENT_CENTER, screen.x, 16, Color(1, 1, 1, 0.85))
+		return
 	var altitude := maxf(player.global_position.y, 0.0)
 	var altitude_text := "標高 %d m / %d m" % [roundi(altitude), roundi(summit_height)]
 	draw_string(font, Vector2(screen.x - 260.0, 44.0), altitude_text, HORIZONTAL_ALIGNMENT_RIGHT, 220.0, 16)
-	if day and not day.is_night:
+	if day == null:
+		return
+	if day.is_night:
+		draw_string(font, Vector2(0.0, 44.0), "夜明けまで %s" % format_time(day.seconds_until_dawn()),
+			HORIZONTAL_ALIGNMENT_CENTER, screen.x, 16, Color(0.65, 0.72, 1.0, 0.85))
+	else:
 		var left := day.seconds_until_night()
-		var color := Color(1.0, 0.85, 0.6, 0.9) if left > 20.0 else Color(1.0, 0.4, 0.3, 0.95)
+		var color := Color(1.0, 0.85, 0.6, 0.9) if left > 30.0 else Color(1.0, 0.4, 0.3, 0.95)
 		draw_string(font, Vector2(0.0, 44.0), "日没まで %s" % format_time(left), HORIZONTAL_ALIGNMENT_CENTER, screen.x, 16, color)
 
 
-## 画面下のアイテム欄。数字キーで使う
+## 画面下のアイテム欄。数字キーやホイールで選び、右クリックで使う。選んでいるアイテムの名前と使い方も出す
 func _draw_hotbar(font: Font, screen: Vector2) -> void:
-	var total := Items.COUNT * SLOT_SIZE + (Items.COUNT - 1) * SLOT_GAP
+	var inventory := player.inventory
+	var total := Items.SLOTS * SLOT_SIZE + (Items.SLOTS - 1) * SLOT_GAP
 	var left := (screen.x - total) / 2.0
 	var top := screen.y - SLOT_SIZE - 24.0
-	for i in Items.COUNT:
-		var slot := Rect2(left + i * (SLOT_SIZE + SLOT_GAP), top, SLOT_SIZE, SLOT_SIZE)
-		var count: int = player.items[i] if i < player.items.size() else 0
-		var alpha := 1.0 if count > 0 else 0.3
-		draw_rect(slot, Color(0.0, 0.0, 0.0, 0.5))
-		draw_rect(slot, Color(1, 1, 1, 0.25 * alpha + 0.05), false, 1.0)
-		_draw_item_icon(i, slot.get_center(), alpha)
+	for i in Items.SLOTS:
+		var chosen := i == inventory.selected
+		var slot := Rect2(left + i * (SLOT_SIZE + SLOT_GAP), top - (6.0 if chosen else 0.0), SLOT_SIZE, SLOT_SIZE)
+		var kind := inventory.kinds[i]
+		draw_rect(slot, Color(0.0, 0.0, 0.0, 0.6 if chosen else 0.45))
+		draw_rect(slot, Color(1.0, 0.85, 0.5, 0.95) if chosen else Color(1, 1, 1, 0.25), false, 2.0 if chosen else 1.0)
+		if kind >= 0 and _icons:
+			var icon := _icons.icon(kind)
+			if icon:
+				draw_texture_rect(icon, slot.grow(-4.0), false)
 		draw_string(font, slot.position + Vector2(5.0, 15.0), str(i + 1), HORIZONTAL_ALIGNMENT_LEFT, -1, 16, Color(1, 1, 1, 0.6))
-		if count > 0:
-			draw_string(font, slot.position + Vector2(0.0, SLOT_SIZE - 5.0), "×%d" % count,
+		if kind >= 0 and inventory.counts[i] > 1:
+			draw_string(font, slot.position + Vector2(0.0, SLOT_SIZE - 5.0), "×%d" % inventory.counts[i],
 				HORIZONTAL_ALIGNMENT_RIGHT, SLOT_SIZE - 5.0, 16, Color(1, 1, 1, 0.9))
+	var kind := inventory.selected_kind()
+	if kind >= 0:
+		var name_color := Color(1.0, 0.9, 0.7, 0.9)
+		draw_string(font, Vector2(0.0, top - 34.0), Items.NAMES[kind], HORIZONTAL_ALIGNMENT_CENTER, screen.x, 16, name_color)
+		draw_string(font, Vector2(0.0, top - 14.0), Items.DESCRIPTIONS[kind], HORIZONTAL_ALIGNMENT_CENTER, screen.x, 16, Color(1, 1, 1, 0.55))
 
 
-func _draw_item_icon(kind: int, c: Vector2, alpha: float) -> void:
-	match kind:
-		Items.Kind.PITON:
-			draw_line(c + Vector2(-9.0, 9.0), c + Vector2(11.0, -11.0), Color(0.78, 0.8, 0.84, alpha), 4.0)
-			draw_arc(c + Vector2(-12.0, 12.0), 5.0, 0.0, TAU, 16, Color(0.78, 0.8, 0.84, alpha), 2.0)
-		Items.Kind.BANDAGE:
-			draw_rect(Rect2(c + Vector2(-2.0, 2.0), Vector2(15.0, 8.0)), Color(0.88, 0.86, 0.8, alpha))
-			draw_circle(c + Vector2(-3.0, -2.0), 11.0, Color(0.93, 0.9, 0.84, alpha))
-			draw_circle(c + Vector2(-3.0, -2.0), 3.5, Color(0.6, 0.58, 0.54, alpha))
-		Items.Kind.ONIGIRI:
-			draw_colored_polygon(PackedVector2Array([c + Vector2(0.0, -14.0), c + Vector2(-14.0, 11.0), c + Vector2(14.0, 11.0)]),
-				Color(0.96, 0.96, 0.93, alpha))
-			draw_rect(Rect2(c + Vector2(-6.0, 3.0), Vector2(12.0, 8.0)), Color(0.08, 0.12, 0.08, alpha))
-		Items.Kind.OFUDA:
-			draw_rect(Rect2(c + Vector2(-7.0, -15.0), Vector2(14.0, 30.0)), Color(0.93, 0.88, 0.74, alpha))
-			for y in [-9.0, 0.0, 9.0]:
-				draw_line(c + Vector2(-4.0, y), c + Vector2(4.0, y), Color(0.75, 0.08, 0.05, alpha), 2.0)
+## 効いているアイテムや状態（スタミナの上に並べる）
+func _draw_effects(font: Font, screen: Vector2) -> void:
+	var lines: Array[String] = []
+	if player.boost_time > 0.0:
+		lines.append("元気　%d" % ceili(player.boost_time))
+	for effect: String in EFFECT_NAMES:
+		if player.has_effect(effect):
+			lines.append("%s　%d" % [EFFECT_NAMES[effect], ceili(player.effects[effect])])
+	if player.bell_ringing:
+		lines.append("鈴を鳴らしている")
+	for i in lines.size():
+		draw_string(font, Vector2(40.0, screen.y - 96.0 - i * 22.0), lines[i], HORIZONTAL_ALIGNMENT_LEFT, -1, 16, Color(1, 1, 1, 0.75))
+
+
+## 方位磁石：次のたき火の方角と距離
+func _draw_compass(font: Font, screen: Vector2) -> void:
+	if not player.has_effect("compass") or not player.compass_target.is_finite():
+		return
+	var camera := player.get_camera()
+	var to := player.compass_target - camera.global_position
+	var forward := -camera.global_transform.basis.z
+	var angle := atan2(forward.x, -forward.z) - atan2(to.x, -to.z)
+	var center := Vector2(screen.x / 2.0, 100.0)
+	draw_circle(center, 22.0, Color(0.0, 0.0, 0.0, 0.45))
+	draw_arc(center, 22.0, 0.0, TAU, 32, Color(0.9, 0.75, 0.4, 0.8), 2.0)
+	var tip := center + Vector2(sin(-angle), -cos(-angle)) * 18.0
+	var side := Vector2(cos(-angle), sin(-angle)) * 6.0
+	draw_colored_polygon(PackedVector2Array([tip, center + side, center - side]), Color(0.9, 0.15, 0.1))
+	draw_string(font, center + Vector2(-60.0, 44.0), "たき火まで %d m" % roundi(Vector2(to.x, to.z).length()),
+		HORIZONTAL_ALIGNMENT_CENTER, 120.0, 16, Color(1, 1, 1, 0.8))
+
+
+## 毒・幻覚・胞子・沼で、画面の色が変わる
+func _draw_conditions(screen: Vector2) -> void:
+	if player.has_effect("vision"):
+		var hue := fmod(_time * 0.15, 1.0)
+		draw_rect(Rect2(Vector2.ZERO, screen), Color.from_hsv(hue, 0.7, 0.8, 0.14))
+	if player.has_effect("spores"):
+		draw_rect(Rect2(Vector2.ZERO, screen), Color(0.7, 0.75, 0.3, 0.18 + 0.05 * sin(_time * 3.0)))
+	if player.has_effect("poison"):
+		draw_rect(Rect2(Vector2.ZERO, screen), Color(0.2, 0.5, 0.1, 0.12 + 0.06 * sin(_time * 5.0)))
+	if player.sink > 0.0:
+		var depth := clampf(player.sink / Player.SINK_DEADLY, 0.0, 1.0)
+		draw_rect(Rect2(0.0, screen.y * (1.0 - depth), screen.x, screen.y * depth), Color(0.12, 0.1, 0.05, 0.85))
 
 
 func _draw_title(font: Font, screen: Vector2) -> void:

@@ -2,20 +2,24 @@ class_name Stalker
 extends Node3D
 ## 夜になると、ふもとからプレイヤーが通った道をそのままなぞって登ってくる“何か”。
 ## 「ぴたっと止まる → 急にカクカク動く」をくり返しながら近づき、プレイヤーが休んでいる間に距離を詰める。
-## お札の円の中には入れない。
+## お札の円の中には入れない。爆竹の音にひるんで後ずさる。熊よけの鈴の音を聞きつけると、速くなる。
 
 signal caught
 
 const RECORD_SPACING := 0.5   # 足跡を記録する間隔 (m)
 const START_SPEED := 2.6      # 道のりを進む平均の速さ (m/s)。登り続ければ逃げられ、休みすぎると追いつかれる
 const SPEED_GAIN := 0.01      # 夜が長引くほど速くなる (m/s ずつ毎秒)
+const NIGHT_SPEED_GAIN := 0.2 # 夜を重ねるごとに速くなる (m/s)
 const MAX_GAP := 55.0         # これより遠くには離れない（道のりでの距離）
+const APPEAR_GAP := 25.0      # 足跡がこれだけ伸びたら姿を現す（たき火から再開した直後は、すぐには現れない）
 const CATCH_DISTANCE := 1.4
 const SHORTCUT_RADIUS := 1.5  # 同じ場所を2回通った道は、ぐるっと回らずに近道する
 const SHORTCUT_MIN_SAVING := 6.0  # 道のりがこれ以上短くなるときだけ近道する
 const SHORTCUT_LOOKAHEAD := 300
 const DANGER_NEAR := 5.0
 const DANGER_FAR := 30.0
+const SCARE_SETBACK := 30.0  # 爆竹でひるんだとき、道のりをこれだけ後ずさる
+const BELL_BOOST := 1.35
 
 # 動き方
 const DASH_TIME := Vector2(0.3, 0.9)    # 動いている時間の範囲（秒）
@@ -27,7 +31,9 @@ const MODEL := preload("res://assets/models/stalker.glb")
 const SIDES := ["L", "R"]
 
 var target: Player
-var active := false
+var active := false   # 姿を現して、追ってきている
+var hunting := false  # 夜のあいだ。足跡が十分に伸びたら姿を現す
+var night := 1        # 何回目の夜か。夜を重ねるほど速い
 var danger := 0.0  # 0（遠い）〜 1（すぐそば）。画面と音の演出に使う
 
 var _trail := PackedVector3Array()
@@ -54,6 +60,7 @@ var _voice_player: AudioStreamPlayer
 
 
 func _ready() -> void:
+	add_to_group(&"creatures")
 	_build_body()
 	_scratch_player = _make_3d_player(Sfx.scratches(), 8.0, 80.0, &"Echo")
 	_crack_player = _make_3d_player(Sfx.crack(), 6.0, 50.0, &"Echo")
@@ -70,6 +77,7 @@ func _ready() -> void:
 
 func reset() -> void:
 	stop()
+	hunting = false
 	visible = false
 	_trail.clear()
 	_trail_length.clear()
@@ -77,20 +85,54 @@ func reset() -> void:
 	_progress = 0.0
 
 
-func activate() -> void:
+## 夜になった。足跡が APPEAR_GAP 以上あれば、最大 MAX_GAP だけ後ろに姿を現す。
+## 足りなければ（たき火から再開した直後など）、足跡が伸びるのを待ってから現れる
+func hunt(night_number: int) -> void:
+	hunting = true
+	night = night_number
+	_voice_player.pitch_scale = 1.0
+	_voice_player.volume_db = -4.0
+	_voice_player.play()
+	if _end_length() >= APPEAR_GAP:
+		_appear()
+
+
+## 夜が明けた。うめき声を残して姿を消す
+func retreat() -> void:
+	hunting = false
+	if active:
+		_voice_player.pitch_scale = 0.7
+		_voice_player.volume_db = -8.0
+		_voice_player.play()
+	stop()
+	visible = false
+
+
+func _appear() -> void:
 	active = true
 	visible = true
-	_speed = START_SPEED
+	_speed = START_SPEED + NIGHT_SPEED_GAIN * (night - 1)
 	_dashing = false
 	_phase_time = 0.0
 	_progress = maxf(_end_length() - MAX_GAP, 0.0)
 	_sync_index()
 	global_position = _position_on_trail()
-	_voice_player.pitch_scale = 1.0
-	_voice_player.volume_db = -4.0
-	_voice_player.play()
 	_scratch_player.play()
 	_growl_player.play()
+
+
+## 爆竹の音にひるんで、道のりを後ずさる
+func scare(_from: Vector3) -> void:
+	if not active:
+		return
+	_progress = maxf(_progress - SCARE_SETBACK, 0.0)
+	_index = 0
+	_sync_index()
+	global_position = _position_on_trail()
+	_dashing = false
+	_phase_time = 2.5
+	_voice_player.pitch_scale = 1.3
+	_voice_player.play()
 
 
 func stop() -> void:
@@ -133,6 +175,8 @@ func _physics_process(delta: float) -> void:
 	if target == null:
 		return
 	_record_trail()
+	if hunting and not active and _end_length() >= APPEAR_GAP:
+		_appear()
 	if not active:
 		return
 
@@ -144,12 +188,14 @@ func _physics_process(delta: float) -> void:
 	var previous_progress := _progress
 	var previous_index := _index
 	var step := _speed * DASH_BOOST * delta if _dashing else 0.0
+	if target.bell_ringing:
+		step *= BELL_BOOST
 	_progress = minf(maxf(_progress + step, _end_length() - MAX_GAP), _end_length())
 	_sync_index()
 	_take_shortcut()
 	var next := _position_on_trail()
-	if Ward.blocks(get_tree(), next):
-		# お札の円の手前で立ち止まり、じっとこちらを見る
+	if Ward.blocks(get_tree(), next) and not Ward.blocks(get_tree(), global_position):
+		# お札やたき火の円の手前で立ち止まり、じっとこちらを見る
 		_progress = previous_progress
 		_index = previous_index
 		next = global_position

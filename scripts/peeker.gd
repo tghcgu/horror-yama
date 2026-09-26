@@ -29,6 +29,8 @@ var _shriek: AudioStreamPlayer3D
 
 
 func _ready() -> void:
+	add_to_group(&"creatures")
+	add_to_group(&"spirits")
 	_build()
 	_hiss = _make_player(Sfx.hiss(), 1.0)
 	_shriek = _make_player(Sfx.wail(), 2.0)
@@ -56,6 +58,16 @@ func hide_now() -> void:
 
 func retreat() -> void:
 	_retreating = true
+
+
+func scare(_from: Vector3) -> void:
+	if active:
+		retreat()
+
+
+func purify() -> void:
+	if active:
+		retreat()
 
 
 func _process(delta: float) -> void:

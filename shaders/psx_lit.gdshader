@@ -9,6 +9,8 @@ uniform sampler2D albedo_texture : source_color, filter_nearest, repeat_enable, 
 uniform float texture_scale = 1.0;   // 1 m あたりのくり返し回数
 uniform float saturation = 1.0;
 uniform vec3 emission : source_color = vec3(0.0);
+uniform bool use_uv = false;         // true なら、モデルの UV で貼る（Blender で模様を焼き込んだモデル用）
+uniform bool use_vertex_color = false; // true なら、頂点の色を掛ける（小さな形をまとめた置き物用。MeshBuilder）
 
 varying vec3 world_position;
 varying vec3 world_normal;
@@ -20,8 +22,8 @@ void vertex() {
 }
 
 void fragment() {
-	vec3 tex = psx_triplanar(albedo_texture, world_position * texture_scale, world_normal);
-	ALBEDO = albedo * psx_saturate(tex, saturation);
+	vec3 tex = use_uv ? texture(albedo_texture, UV).rgb : psx_triplanar(albedo_texture, world_position * texture_scale, world_normal);
+	ALBEDO = albedo * psx_saturate(tex, saturation) * (use_vertex_color ? COLOR.rgb : vec3(1.0));
 	ROUGHNESS = 1.0;
 	EMISSION = emission;
 }
