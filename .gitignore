@@ -1,3 +1,5 @@
 .godot/
 *.tmp
 /export/
+tools/creatures/out/
+__pycache__/

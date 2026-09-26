@@ -65,6 +65,8 @@ func _test_climb_and_night() -> void:
 				var head := _main.stalker.head_position()
 				var outward := Vector3(head.x, 0.0, head.z).normalized()
 				await _shot_from(head + outward * 3.0 + Vector3.UP * 1.0, head - Vector3.UP * 0.5, "stalker.png")
+				await _shot_from(head + outward * 2.2 + Vector3.UP * 0.3, head - Vector3.UP * 0.7, "stalker_lit.png", true)
+				await _shot_from(head + outward * 0.9, head, "stalker_face.png", true)
 		if i == 200:  # 20 秒登ったら、手を止めて休む
 			Input.action_release("move_forward")
 			Input.action_release("grab")
@@ -155,7 +157,7 @@ func _test_spider() -> void:
 	var spider: CragSpider = spiders[0]
 	var normal: Vector3 = spider.get("_normal")
 	if _shot_dir != "":
-		await _shot_from(spider.global_position + normal * 2.2 + Vector3.UP * 0.6, spider.global_position, "spider.png")
+		await _shot_from(spider.global_position + normal * 2.2 + Vector3.UP * 0.6, spider.global_position, "spider.png", true)
 	var player := _main.player
 	player.global_position = spider.global_position + normal * 0.45 - Vector3.UP * 1.2
 	player.call("_start_climb", normal)
@@ -182,16 +184,15 @@ func _test_peeker() -> void:
 		return
 	await _wait(2.0)
 	player.set_headlamp(true)
-	var head: Node3D = peeker.get("_head")
 	if _shot_dir != "":
 		var side := peeker.global_transform.basis.x
-		await _shot_from(head.global_position + side * 2.5 + peeker.global_transform.basis.z * -1.0,
-			head.global_position - Vector3.UP * 0.3, "peeker_side.png")
-	player.face_point(head.global_position)
+		await _shot_from(peeker.head_position() + side * 2.5 + peeker.global_transform.basis.z * -1.0,
+			peeker.head_position() - Vector3.UP * 0.3, "peeker_side.png", true)
+	player.face_point(peeker.head_position())
 	if _shot_dir != "":
 		await _save_shot("peeker.png")
 	for i in 20:
-		player.face_point(head.global_position)
+		player.face_point(peeker.head_position())
 		await _wait(0.1)
 	_check("headlamp stare repels the peeker", bool(peeker.get("_retreating")) or not peeker.active)
 	Input.action_release("grab")
@@ -216,6 +217,9 @@ func _test_pale_one() -> void:
 	_check("pale one appears in the snow", pale.active)
 	if not pale.active:
 		return
+	if _shot_dir != "":
+		var front := -pale.global_transform.basis.z
+		await _shot_from(pale.global_position + front * 3.2 + Vector3.UP * 2.3, pale.global_position + Vector3.UP * 2.0, "pale_one_close.png", true)
 	# 背を向けると近づいてくる
 	var away := player.global_position * 2.0 - pale.global_position
 	player.face_point(Vector3(away.x, player.global_position.y + 1.6, away.z))
@@ -313,12 +317,19 @@ func _climb_onto_first_wall() -> bool:
 	return false
 
 
-func _shot_from(from: Vector3, look_target: Vector3, file_name: String) -> void:
+## lit を true にすると、形を確認できるようにカメラのそばに一時的な照明を置く
+func _shot_from(from: Vector3, look_target: Vector3, file_name: String, lit := false) -> void:
 	var camera := Camera3D.new()
 	_main.add_child(camera)
 	camera.global_position = from
 	camera.look_at(look_target)
 	camera.make_current()
+	if lit:
+		var light := OmniLight3D.new()
+		light.omni_range = 8.0
+		light.light_energy = 1.0
+		camera.add_child(light)
+		light.position = Vector3(0.6, 0.8, 0.0)
 	await _save_shot(file_name)
 	camera.queue_free()
 	_main.player.get_camera().make_current()

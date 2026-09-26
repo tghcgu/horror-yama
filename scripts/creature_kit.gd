@@ -1,6 +1,6 @@
 class_name CreatureKit
 extends RefCounted
-## 化け物の体を、単純な形の組み合わせで作るための道具
+## 化け物と置き物の素材、Blender で作ったモデルの読み込み
 
 const SKIN_SHADER := preload("res://shaders/creature_skin.gdshader")
 
@@ -13,6 +13,31 @@ static func skin(color: Color, rim: Color, rim_strength := 0.3, wetness := 0.5) 
 	material.set_shader_parameter("rim_strength", rim_strength)
 	material.set_shader_parameter("wetness", wetness)
 	return material
+
+
+## Blender で作ったモデル（.glb）を読み込み、素材を差し替えて返す。
+## materials は「Blender での素材の名前 → 使う素材」。名前が "_skin" で終わる素材は、焼き込んだ模様を
+## 化け物の肌（skin_material）に貼り直す。肌の素材が複数あるときは、2 つめ以降は skin_material の複製を使う
+static func load_model(scene: PackedScene, skin_material: ShaderMaterial, materials: Dictionary) -> Node3D:
+	var model := scene.instantiate() as Node3D
+	var skins := {}  # 焼き込んだ素材の名前 → 貼り直した肌
+	for mesh_instance: MeshInstance3D in model.find_children("*", "MeshInstance3D", true, false):
+		var mesh := mesh_instance.mesh
+		for i in mesh.get_surface_count():
+			var original := mesh.surface_get_material(i)
+			var material_name := original.resource_name if original else ""
+			if material_name.ends_with("_skin"):
+				if not skins.has(material_name):
+					var skin := skin_material if skins.is_empty() else skin_material.duplicate() as ShaderMaterial
+					var baked := original as BaseMaterial3D
+					if baked:
+						skin.set_shader_parameter("albedo_texture", baked.albedo_texture)
+					skin.set_shader_parameter("mottle_amount", 0.0)
+					skins[material_name] = skin
+				mesh_instance.set_surface_override_material(i, skins[material_name])
+			elif materials.has(material_name):
+				mesh_instance.set_surface_override_material(i, materials[material_name])
+	return model
 
 
 static func glow(color: Color, energy: float) -> StandardMaterial3D:
@@ -43,53 +68,8 @@ static func part(parent: Node3D, mesh: PrimitiveMesh, material: Material, pos :=
 	return instance
 
 
-static func joint(parent: Node3D, pos: Vector3) -> Node3D:
-	var node := Node3D.new()
-	node.position = pos
-	parent.add_child(node)
-	return node
-
-
-## 付け根から -Y 方向へ伸びる、節のある手足。各節の付け根の関節を返す（最後の節の先に爪）
-static func limb(parent: Node3D, origin: Vector3, radius: float, lengths: Array, material: Material,
-		claws: int, claw_material: Material) -> Array[Node3D]:
-	var joints: Array[Node3D] = []
-	var current := joint(parent, origin)
-	var r := radius
-	for i in lengths.size():
-		var length: float = lengths[i]
-		joints.append(current)
-		part(current, capsule(r, length + r * 2.0), material, Vector3(0.0, -length / 2.0, 0.0))
-		if i < lengths.size() - 1:
-			current = joint(current, Vector3(0.0, -length, 0.0))
-			r *= 0.85
-	var tip: float = lengths[lengths.size() - 1]
-	for c in claws:
-		var spread := (c - (claws - 1) / 2.0) * 0.35
-		part(current, cone(0.012, 0.2), claw_material, Vector3(sin(spread) * 0.05, -tip - 0.09, 0.0),
-			Vector3(0.0, 0.0, PI + spread * 0.5))
-	return joints
-
-
-static func capsule(radius: float, height: float) -> CapsuleMesh:
-	var mesh := CapsuleMesh.new()
-	mesh.radius = radius
-	mesh.height = maxf(height, radius * 2.0)
-	return mesh
-
-
 static func sphere(radius: float) -> SphereMesh:
 	var mesh := SphereMesh.new()
 	mesh.radius = radius
 	mesh.height = radius * 2.0
-	return mesh
-
-
-## 先のとがった円すい（爪や歯）。+Y 方向が先端
-static func cone(radius: float, height: float) -> CylinderMesh:
-	var mesh := CylinderMesh.new()
-	mesh.top_radius = 0.0
-	mesh.bottom_radius = radius
-	mesh.height = height
-	mesh.radial_segments = 8
 	return mesh

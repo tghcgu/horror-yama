@@ -23,6 +23,8 @@ const FREEZE_TIME := Vector2(0.15, 0.6) # 止まっている時間の範囲（�
 const DASH_BOOST := 1.7                 # 止まっている分を取り返すため、動くときは平均より速い
 const POSE_INTERVAL := Vector2(0.1, 0.22)
 const POSE_SNAP := 22.0                 # 手足が次の姿勢へ切り替わる速さ（大きいほどカクカク）
+const MODEL := preload("res://assets/models/stalker.glb")
+const SIDES := ["L", "R"]
 
 var target: Player
 var active := false
@@ -40,14 +42,9 @@ var _pose_time := 0.0
 var _heartbeat_wait := 0.0
 
 var _skin: ShaderMaterial
-var _mouth_glow: StandardMaterial3D
 var _body: Node3D
-var _head: Node3D
-var _jaw: Node3D
+var _poser: BonePoser
 var _head_roll := 0.0
-var _arms: Array[Node3D] = []  # [左肩, 左ひじ, 左手首, 右肩, 右ひじ, 右手首]
-var _legs: Array[Node3D] = []  # [左股, 左ひざ, 左足首, 右股, 右ひざ, 右足首]
-var _pose := {}                # 関節 → 目標の角度
 
 var _scratch_player: AudioStreamPlayer3D
 var _crack_player: AudioStreamPlayer3D
@@ -86,7 +83,6 @@ func activate() -> void:
 	_speed = START_SPEED
 	_dashing = false
 	_phase_time = 0.0
-	_mouth_glow.emission_energy_multiplier = 1.0
 	_progress = maxf(_end_length() - MAX_GAP, 0.0)
 	_sync_index()
 	global_position = _position_on_trail()
@@ -105,25 +101,29 @@ func stop() -> void:
 	_growl_player.stop()
 
 
+## 顔の真ん中（頭の骨の途中）
 func head_position() -> Vector3:
-	return _head.global_position
+	var head := _poser.world_transform("head")
+	return head.origin + head.basis.y.normalized() * 0.1
 
 
-## 捕まえた瞬間：カメラの目の前に飛び込んで、腕を伸ばし、あごを開いて叫ぶ
+## 捕まえた瞬間：カメラの目の前に飛び込んで、腕を広げて伸ばし、あごを大きく開いて叫ぶ
 func lunge_at(eye: Vector3, direction: Vector3) -> void:
 	visible = true
 	var flat := Vector3(direction.x, 0.0, direction.z)
 	if flat.length() > 0.01:
 		_facing = -flat.normalized()
 		_body.look_at(_body.global_position + _facing, Vector3.UP)
-	global_position += eye + direction * 0.6 - _head.global_position
-	_look_at_point(_head, eye)
-	_mouth_glow.emission_energy_multiplier = 5.0
-	for s in [0, 3]:
-		_arms[s].rotation = Vector3(1.3, 0.0, 0.0)
-		_arms[s + 1].rotation = Vector3(0.3, 0.0, 0.0)
-		_arms[s + 2].rotation = Vector3(-0.2, 0.0, 0.0)
-	_jaw.rotation.x = -0.9
+	for side in SIDES:
+		var outward := 0.35 if side == "L" else -0.35
+		_poser.set_target("upperarm." + side, Vector3(1.4, 0.0, outward))
+		_poser.set_target("forearm." + side, Vector3(0.2, 0.0, 0.0))
+		_poser.set_target("fingers." + side, Vector3(0.7, 0.0, 0.0))
+	_poser.set_target("chest", Vector3(0.3, 0.0, 0.0))
+	_poser.set_target("jaw", Vector3(-0.8, 0.0, 0.0))
+	_poser.snap_all()
+	global_position += eye + direction * 0.6 - head_position()
+	_poser.aim("head", eye, 0.3)
 	_voice_player.pitch_scale = 1.7
 	_voice_player.volume_db = 2.0
 	_voice_player.play()
@@ -175,9 +175,9 @@ func _process(delta: float) -> void:
 		if _pose_time <= 0.0:
 			_pose_time = randf_range(POSE_INTERVAL.x, POSE_INTERVAL.y)
 			_new_pose()
-	var weight := 1.0 - exp(-POSE_SNAP * delta)
-	for joint: Node3D in _pose:
-		joint.rotation = joint.rotation.lerp(_pose[joint], weight)
+	_poser.update(delta, POSE_SNAP)
+	# 体がどちらを向いていても、首だけはぐるりと回ってプレイヤーを見上げる
+	_poser.aim("head", target.get_camera().global_position, _head_roll)
 
 	_heartbeat_wait -= delta
 	if danger > 0.05 and _heartbeat_wait <= 0.0:
@@ -197,16 +197,18 @@ func _switch_phase() -> void:
 	_skin.set_shader_parameter("twitch", 1.0 if _dashing else 0.0)
 
 
-## 手足・首・あごを、でたらめな角度へ一気に曲げる
+## 手足・背中・あごを、でたらめな角度へ一気に曲げる（よじ登っているような、壊れた動き）
 func _new_pose() -> void:
-	for s in [0, 3]:
-		_pose[_arms[s]] = Vector3(randf_range(1.5, 2.9), 0.0, randf_range(-0.5, 0.5))
-		_pose[_arms[s + 1]] = Vector3(randf_range(0.2, 1.4), 0.0, 0.0)
-		_pose[_arms[s + 2]] = Vector3(randf_range(-0.4, 0.6), 0.0, 0.0)
-		_pose[_legs[s]] = Vector3(randf_range(-1.0, 0.3), 0.0, randf_range(-0.25, 0.25))
-		_pose[_legs[s + 1]] = Vector3(randf_range(-1.6, -0.2), 0.0, 0.0)
-		_pose[_legs[s + 2]] = Vector3(randf_range(0.2, 0.9), 0.0, 0.0)
-	_pose[_jaw] = Vector3(randf_range(-0.3, 0.0), 0.0, 0.0)
+	for side in SIDES:
+		_poser.set_target("upperarm." + side, Vector3(randf_range(1.5, 2.9), 0.0, randf_range(-0.5, 0.5)))
+		_poser.set_target("forearm." + side, Vector3(randf_range(0.2, 1.4), 0.0, 0.0))
+		_poser.set_target("hand." + side, Vector3(randf_range(-0.4, 0.6), 0.0, 0.0))
+		_poser.set_target("fingers." + side, Vector3(randf_range(0.2, 1.1), 0.0, 0.0))
+		_poser.set_target("thigh." + side, Vector3(randf_range(-0.3, 1.1), 0.0, randf_range(-0.25, 0.25)))
+		_poser.set_target("shin." + side, Vector3(randf_range(-1.5, -0.2), 0.0, 0.0))
+	_poser.set_target("spine", Vector3(randf_range(-0.1, 0.3), randf_range(-0.2, 0.2), randf_range(-0.15, 0.15)))
+	_poser.set_target("chest", Vector3(randf_range(-0.1, 0.25), randf_range(-0.3, 0.3), 0.0))
+	_poser.set_target("jaw", Vector3(randf_range(-0.35, 0.0), 0.0, 0.0))
 	_head_roll = randf_range(-0.7, 0.7)
 	if _crack_player and randf() < 0.5:
 		_crack_player.pitch_scale = randf_range(0.7, 1.4)
@@ -273,69 +275,22 @@ func _update_facing(motion: Vector3) -> void:
 		if blended.length() > 0.01:
 			_facing = blended.normalized()
 	_body.look_at(_body.global_position + _facing, Vector3.UP)
-	_look_at_point(_head, target.global_position + Vector3.UP * 1.6)
-	_head.rotate_object_local(Vector3.BACK, _head_roll)
 
 
-func _look_at_point(node: Node3D, point: Vector3) -> void:
-	var gaze := point - node.global_position
-	if gaze.length() < 0.1:
-		return
-	var up := Vector3.UP if absf(gaze.normalized().y) < 0.98 else Vector3.BACK
-	node.look_at(node.global_position + gaze, up)
-
-
-## やせこけて背骨の曲がった、手足の長い人影（仮のモデル）
+## Blender で作ったモデル（tools/creatures/build_stalker.py）を読み込み、骨を動かせるようにする
 func _build_body() -> void:
-	_skin = CreatureKit.skin(Color(0.025, 0.024, 0.024), Color(0.35, 0.4, 0.48), 0.2, 0.6)
-	_mouth_glow = CreatureKit.glow(Color(0.3, 0.02, 0.02), 1.0)
-	var claw := CreatureKit.flat(Color(0.1, 0.09, 0.08), 0.4)
-	var tooth := CreatureKit.flat(Color(0.72, 0.68, 0.6), 0.5)
-	var eye := CreatureKit.glow(Color(1.0, 0.92, 0.75), 12.0)
-	var socket := CreatureKit.flat(Color.BLACK, 1.0)
-
+	_skin = CreatureKit.skin(Color.WHITE, Color(0.35, 0.4, 0.48), 0.2, 0.6)
 	_body = Node3D.new()
 	add_child(_body)
-	var pelvis := CreatureKit.joint(_body, Vector3(0.0, 1.15, 0.0))
-	CreatureKit.part(pelvis, CreatureKit.capsule(0.11, 0.34), _skin, Vector3.ZERO, Vector3(0.0, 0.0, PI / 2.0))
-
-	# 前かがみの背骨。あばら骨と、背中に浮き出た背骨の節
-	var spine := CreatureKit.joint(pelvis, Vector3(0.0, 0.05, 0.0))
-	spine.rotation.x = -0.8
-	CreatureKit.part(spine, CreatureKit.capsule(0.14, 0.75), _skin, Vector3(0.0, 0.42, 0.0))
-	for i in 5:
-		CreatureKit.part(spine, CreatureKit.capsule(0.013, 0.3 - i * 0.02), _skin,
-			Vector3(0.0, 0.22 + i * 0.1, -0.12), Vector3(0.0, 0.0, PI / 2.0))
-	for i in 6:
-		CreatureKit.part(spine, CreatureKit.sphere(0.035), _skin, Vector3(0.0, 0.12 + i * 0.12, 0.12))
-
-	var neck := CreatureKit.joint(spine, Vector3(0.0, 0.82, -0.03))
-	CreatureKit.part(neck, CreatureKit.capsule(0.045, 0.34), _skin, Vector3(0.0, 0.15, 0.0))
-
-	# 頭：後ろに長い頭蓋、落ちくぼんだ目、開くあご
-	_head = CreatureKit.joint(neck, Vector3(0.0, 0.33, 0.0))
-	CreatureKit.part(_head, CreatureKit.capsule(0.12, 0.4), _skin, Vector3(0.0, 0.06, 0.04), Vector3(1.27, 0.0, 0.0))
-	for side in [-1.0, 1.0]:
-		CreatureKit.part(_head, CreatureKit.sphere(0.032), socket, Vector3(0.05 * side, 0.07, -0.128))
-		CreatureKit.part(_head, CreatureKit.sphere(0.02), eye, Vector3(0.05 * side, 0.07, -0.152))
-	CreatureKit.part(_head, CreatureKit.sphere(0.05), _mouth_glow, Vector3(0.0, -0.07, -0.09))
-	for i in 6:
-		var x := -0.045 + i * 0.018
-		CreatureKit.part(_head, CreatureKit.cone(0.008, 0.045), tooth, Vector3(x, -0.05, -0.13), Vector3(PI, 0.0, 0.0))
-	_jaw = CreatureKit.joint(_head, Vector3(0.0, -0.06, 0.0))
-	CreatureKit.part(_jaw, CreatureKit.capsule(0.055, 0.2), _skin, Vector3(0.0, -0.03, -0.05), Vector3(PI / 2.0, 0.0, 0.0))
-	for i in 6:
-		var x := -0.045 + i * 0.018
-		CreatureKit.part(_jaw, CreatureKit.cone(0.008, 0.045), tooth, Vector3(x, 0.035, -0.12))
-
-	for side in [-1.0, 1.0]:
-		_arms.append_array(CreatureKit.limb(spine, Vector3(0.24 * side, 0.74, 0.0), 0.045, [0.7, 0.65, 0.16], _skin, 4, claw))
-	for side in [-1.0, 1.0]:
-		_legs.append_array(CreatureKit.limb(pelvis, Vector3(0.12 * side, 0.0, 0.0), 0.055, [0.55, 0.55, 0.12], _skin, 3, claw))
+	var model := CreatureKit.load_model(MODEL, _skin, {
+		"Eye": CreatureKit.glow(Color(1.0, 0.92, 0.75), 14.0),
+		"Teeth": CreatureKit.flat(Color(0.72, 0.68, 0.58), 0.4),
+		"Claw": CreatureKit.flat(Color(0.07, 0.06, 0.05), 0.4),
+	})
+	_body.add_child(model)
+	_poser = BonePoser.new(model.find_children("*", "Skeleton3D", true, false)[0] as Skeleton3D)
 	_new_pose()
-	for joint: Node3D in _pose:
-		joint.rotation = _pose[joint]
-
+	_poser.snap_all()
 
 func _make_3d_player(stream: AudioStream, unit_size: float, max_distance: float, bus_name: StringName) -> AudioStreamPlayer3D:
 	var player := AudioStreamPlayer3D.new()

@@ -9,8 +9,9 @@ const LIGHT_COS := 0.94       # 画面の中心からこの角度（約20°）�
 const LIGHT_RANGE := 28.0
 const SHOVE_DISTANCE := 3.0
 const LIFETIME := 20.0
-const SIZE := 1.5          # 人より大きい
-const FINGER_CURL := 0.7   # 指が崖の縁から外へ垂れ下がる角度 (rad)
+const SIZE := 1.3          # 人より大きい
+const MODEL := preload("res://assets/models/peeker.glb")
+const SIDES := ["L", "R"]
 
 var active := false
 var player: Player
@@ -22,8 +23,7 @@ var _life := 0.0
 var _retreating := false
 var _time := 0.0
 var _model: Node3D
-var _head: Node3D
-var _fingers: Array[Node3D] = []
+var _poser: BonePoser
 var _hiss: AudioStreamPlayer3D
 var _shriek: AudioStreamPlayer3D
 
@@ -69,15 +69,19 @@ func _process(delta: float) -> void:
 			return
 	else:
 		_rise = minf(_rise + delta / RISE_TIME, 1.0)
-	_model.position.y = lerpf(-0.8, 0.0, smoothstep(0.0, 1.0, _rise))
-	# 顔はプレイヤーを追い、首をかしげる。指は崖の縁でぴくぴく動く
-	var eye := player.get_camera().global_position
-	var gaze := eye - _head.global_position
-	if gaze.length() > 0.1:
-		_head.look_at(eye, Vector3.UP if absf(gaze.normalized().y) < 0.98 else _outward)
-		_head.rotate_object_local(Vector3.BACK, 0.45)
-	for i in _fingers.size():
-		_fingers[i].rotation.x = FINGER_CURL + sin(_time * 7.0 + i * 1.7) * 0.12
+	_model.position.y = lerpf(-0.9, 0.0, smoothstep(0.0, 1.0, _rise))
+	# 指は崖の縁でぴくぴく動き、顔はプレイヤーを追って首をかしげる
+	for i in SIDES.size():
+		var twitch := sin(_time * 7.0 + i * 1.7) * 0.12 + sin(_time * 23.0 + i) * 0.03
+		_poser.set_target("fingers." + SIDES[i], Vector3(twitch, 0.0, 0.0))
+	_poser.update(delta, 20.0)
+	_poser.aim("head", player.get_camera().global_position, 0.45)
+
+
+## 顔の真ん中
+func head_position() -> Vector3:
+	var head := _poser.world_transform("head")
+	return head.origin + head.basis.y.normalized() * 0.08
 
 
 func _physics_process(delta: float) -> void:
@@ -90,10 +94,11 @@ func _physics_process(delta: float) -> void:
 
 	# ヘッドライトで照らされているか
 	var camera := player.get_camera()
-	var to_face := _head.global_position - camera.global_position
+	var face := head_position()
+	var to_face := face - camera.global_position
 	var lit := player.is_headlamp_on() and to_face.length() < LIGHT_RANGE \
 		and (-camera.global_transform.basis.z).dot(to_face.normalized()) > LIGHT_COS \
-		and _line_of_sight(camera.global_position, _head.global_position)
+		and _line_of_sight(camera.global_position, face)
 	if lit and _rise > 0.5:
 		_stare += delta
 		if _stare >= STARE_TO_REPEL:
@@ -118,37 +123,18 @@ func _line_of_sight(from: Vector3, to: Vector3) -> bool:
 	return get_world_3d().direct_space_state.intersect_ray(query).is_empty()
 
 
-## 崖の上に腹ばいになり、縁から顔と長い指を出している青白い人（仮のモデル）
+## Blender で作ったモデル（tools/creatures/build_peeker.py）を読み込む
 func _build() -> void:
-	var skin := CreatureKit.skin(Color(0.6, 0.58, 0.55), Color(0.8, 0.85, 0.9), 0.12, 0.3)
-	var dark := CreatureKit.flat(Color(0.01, 0.01, 0.01), 1.0)
-	var pupil := CreatureKit.glow(Color(0.9, 0.9, 0.85), 1.5)
-	_model = Node3D.new()
+	var skin := CreatureKit.skin(Color.WHITE, Color(0.8, 0.85, 0.9), 0.1, 0.3)
+	_model = CreatureKit.load_model(MODEL, skin, {
+		"EyeBlack": CreatureKit.flat(Color(0.0, 0.0, 0.0), 0.2),
+		"Eye": CreatureKit.glow(Color(1.0, 1.0, 0.9), 3.0),
+		"Teeth": CreatureKit.flat(Color(0.7, 0.66, 0.52), 0.4),
+		"Claw": CreatureKit.flat(Color(0.3, 0.26, 0.22), 0.5),
+	})
 	_model.scale = Vector3.ONE * SIZE
 	add_child(_model)
-	# 縁の奥へ伸びる、腹ばいの体
-	CreatureKit.part(_model, CreatureKit.capsule(0.15, 1.3), skin, Vector3(0.0, 0.1, 0.85), Vector3(PI / 2.0, 0.0, 0.0))
-	CreatureKit.part(_model, CreatureKit.capsule(0.05, 0.4), skin, Vector3(0.0, 0.16, 0.12), Vector3(PI / 2.0 - 0.4, 0.0, 0.0))
-
-	_head = CreatureKit.joint(_model, Vector3(0.0, 0.25, -0.08))
-	CreatureKit.part(_head, CreatureKit.capsule(0.12, 0.34), skin)
-	for side in [-1.0, 1.0]:
-		CreatureKit.part(_head, CreatureKit.sphere(0.032), dark, Vector3(0.048 * side, 0.03, -0.1))
-		CreatureKit.part(_head, CreatureKit.sphere(0.008), pupil, Vector3(0.048 * side, 0.03, -0.128))
-	var mouth := BoxMesh.new()
-	mouth.size = Vector3(0.05, 0.03, 0.02)
-	CreatureKit.part(_head, mouth, dark, Vector3(0.0, -0.075, -0.105))
-
-	# 崖の縁をつかむ両手。長い指が縁から垂れ下がる
-	for side in [-1.0, 1.0]:
-		var hand := CreatureKit.joint(_model, Vector3(0.32 * side, 0.03, -0.02))
-		CreatureKit.part(hand, CreatureKit.capsule(0.04, 0.16), skin, Vector3.ZERO, Vector3(PI / 2.0, 0.0, 0.0))
-		for f in 4:
-			var finger := CreatureKit.joint(hand, Vector3((f - 1.5) * 0.028, 0.0, -0.08))
-			CreatureKit.part(finger, CreatureKit.capsule(0.013, 0.34), skin, Vector3(0.0, -0.16, 0.0))
-			finger.rotation.x = FINGER_CURL
-			_fingers.append(finger)
-
+	_poser = BonePoser.new(_model.find_children("*", "Skeleton3D", true, false)[0] as Skeleton3D)
 
 func _make_player(stream: AudioStream, pitch: float) -> AudioStreamPlayer3D:
 	var sound := AudioStreamPlayer3D.new()

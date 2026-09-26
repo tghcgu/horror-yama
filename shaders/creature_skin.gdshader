@@ -5,6 +5,8 @@ render_mode diffuse_burley, specular_schlick_ggx;
 #include "res://shaders/psx_common.gdshaderinc"
 
 uniform vec3 base_color : source_color = vec3(0.03, 0.03, 0.03);
+uniform sampler2D albedo_texture : source_color, filter_nearest, hint_default_white;  // Blender で焼き込んだ肌の模様
+uniform float mottle_amount = 0.4;  // まだら模様の強さ（焼き込んだ模様があるときは 0 にする）
 uniform vec3 rim_color : source_color = vec3(0.35, 0.4, 0.45);
 uniform float rim_strength = 0.3;   // 輪郭の光り方
 uniform float rim_power = 3.0;      // 大きいほど輪郭の細いところだけ光る
@@ -32,7 +34,7 @@ void vertex() {
 void fragment() {
 	float rim = pow(1.0 - clamp(dot(NORMAL, VIEW), 0.0, 1.0), rim_power);
 	float mottle = value_noise(UV * vec2(12.0, 24.0)) * 0.6 + value_noise(UV * vec2(40.0, 80.0)) * 0.4;
-	ALBEDO = base_color * (0.8 + 0.4 * mottle);
+	ALBEDO = base_color * texture(albedo_texture, UV).rgb * (1.0 - mottle_amount * 0.5 + mottle_amount * mottle);
 	ROUGHNESS = mix(0.95, 0.25, wetness);
 	SPECULAR = 0.5;
 	EMISSION = rim_color * rim * rim_strength;

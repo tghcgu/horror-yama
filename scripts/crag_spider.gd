@@ -1,6 +1,7 @@
 class_name CragSpider
 extends Node3D
 ## 岩場の崖にはりつく大きなクモ。ふだんは壁をゆっくり這い回り、近くを登ると噛みついて壁から落とす。
+## 見た目は Blender で作ったモデル（tools/creatures/build_spider.py）。
 
 const CRAWL_SPEED := 0.35
 const WANDER_RADIUS := 3.0
@@ -8,6 +9,8 @@ const BITE_DISTANCE := 1.3
 const BITE_INJURY := 15.0
 const BITE_COOLDOWN := 3.0
 const ALERT_DISTANCE := 7.0  # これより近づくと、こちらを向いて前脚を振り上げる
+const MODEL := preload("res://assets/models/spider.glb")
+const SIDES := ["L", "R"]
 
 var player: Player
 
@@ -17,13 +20,19 @@ var _goal := Vector3.ZERO
 var _cooldown := 0.0
 var _time := randf() * 10.0
 var _alert := false
-var _legs: Array[Node3D] = []   # 脚の付け根
-var _leg_base: Array[Vector3] = []
+var _moving := false
+var _poser: BonePoser
 var _hiss: AudioStreamPlayer3D
 
 
 func _ready() -> void:
-	_build()
+	var skin := CreatureKit.skin(Color.WHITE, Color(0.55, 0.2, 0.15), 0.15, 0.75)
+	var model := CreatureKit.load_model(MODEL, skin, {
+		"Eye": CreatureKit.glow(Color(1.0, 0.12, 0.08), 8.0),
+		"Claw": CreatureKit.flat(Color(0.06, 0.05, 0.04), 0.3),
+	})
+	add_child(model)
+	_poser = BonePoser.new(model.find_children("*", "Skeleton3D", true, false)[0] as Skeleton3D)
 	_hiss = AudioStreamPlayer3D.new()
 	_hiss.stream = Sfx.hiss()
 	_hiss.unit_size = 4.0
@@ -48,6 +57,7 @@ func _physics_process(delta: float) -> void:
 	var chest := player.global_position + Vector3.UP * 1.2
 	var to_player := chest - global_position
 	_alert = to_player.length() < ALERT_DISTANCE and not player.frozen
+	_moving = false
 	if _alert:
 		_orient(to_player, 1.0 - exp(-8.0 * delta))
 	else:
@@ -57,6 +67,7 @@ func _physics_process(delta: float) -> void:
 		else:
 			global_position += offset.normalized() * minf(CRAWL_SPEED * delta, offset.length())
 			_orient(offset, 1.0 - exp(-4.0 * delta))
+			_moving = true
 
 	if player.state == Player.State.CLIMB and not player.frozen and _cooldown <= 0.0 and to_player.length() < BITE_DISTANCE:
 		_cooldown = BITE_COOLDOWN
@@ -65,17 +76,21 @@ func _physics_process(delta: float) -> void:
 		player.bitten(BITE_INJURY)
 
 
-## 脚をせわしなく動かす。警戒中は前脚を振り上げて震わせる
-func _process(_delta: float) -> void:
-	for i in _legs.size():
-		var base := _leg_base[i]
-		var phase := _time * 12.0 + (0.0 if i % 2 == 0 else PI) + i * 0.4
-		var lift := maxf(sin(phase), 0.0) * 0.25
-		var swing := sin(phase) * 0.18
-		if _alert and i < 2:
-			lift = 0.9 + sin(_time * 30.0) * 0.08  # 前脚を振り上げる
-			swing = 0.0
-		_legs[i].rotation = Vector3(0.0, base.y + swing, base.z + lift * signf(base.z))
+## 這うときは脚を交互に持ち上げ、警戒中は前脚を振り上げて震わせ、牙をかちかち鳴らす
+func _process(delta: float) -> void:
+	for index in 4:
+		for side in SIDES:
+			var s := 1.0 if side == "L" else -1.0
+			var phase := _time * 12.0 + (0.0 if (index + (0 if side == "L" else 1)) % 2 == 0 else PI)
+			var lift := maxf(sin(phase), 0.0) * 0.3 if _moving else 0.0
+			var swing := sin(phase) * 0.2 if _moving else 0.0
+			if _alert and index == 0:
+				lift = 0.9 + sin(_time * 30.0) * 0.08
+				swing = 0.25
+			_poser.set_target("leg%da.%s" % [index, side], Vector3(0.0, swing * s, lift * s))
+			_poser.set_target("leg%db.%s" % [index, side], Vector3(0.0, 0.0, -lift * 0.6 * s))
+	_poser.set_target("fangs", Vector3(absf(sin(_time * 25.0)) * 0.3 if _alert else 0.0, 0.0, 0.0))
+	_poser.update(delta, 30.0)
 
 
 func _pick_goal() -> Vector3:
@@ -102,30 +117,3 @@ func _orient(direction: Vector3, weight: float) -> void:
 	var target := Basis(x, _normal, z).orthonormalized()
 	var current := global_transform.basis.orthonormalized()
 	global_transform.basis = current.slerp(target, weight)
-
-
-func _build() -> void:
-	var skin := CreatureKit.skin(Color(0.07, 0.05, 0.04), Color(0.55, 0.2, 0.15), 0.25, 0.75)
-	var eye := CreatureKit.glow(Color(1.0, 0.15, 0.1), 6.0)
-	var fang := CreatureKit.flat(Color(0.15, 0.1, 0.08), 0.3)
-	var body := Node3D.new()
-	body.scale = Vector3.ONE * 1.3
-	add_child(body)
-	CreatureKit.part(body, CreatureKit.sphere(0.16), skin, Vector3(0.0, 0.15, -0.12), Vector3.ZERO, Vector3(1.0, 0.6, 1.1))
-	CreatureKit.part(body, CreatureKit.sphere(0.24), skin, Vector3(0.0, 0.2, 0.28), Vector3.ZERO, Vector3(1.0, 0.75, 1.3))
-	for i in 6:
-		var x := (-0.05 + (i % 3) * 0.05)
-		var y := 0.21 + (i / 3) * 0.035
-		CreatureKit.part(body, CreatureKit.sphere(0.017), eye, Vector3(x, y, -0.27))
-	for side in [-1.0, 1.0]:
-		CreatureKit.part(body, CreatureKit.cone(0.015, 0.09), fang, Vector3(0.035 * side, 0.1, -0.29), Vector3(PI + 0.5, 0.0, 0.0))
-	# 8本の脚：付け根で外・上へ持ち上げ、ひざで壁の方へ折り曲げる
-	for i in 4:
-		for side in [-1.0, 1.0]:
-			var roll: float = side * 2.18
-			var yaw: float = side * (-0.7 + i * 0.45)
-			var joints := CreatureKit.limb(body, Vector3(0.1 * side, 0.15, -0.2 + i * 0.07), 0.025, [0.4, 0.5], skin, 0, fang)
-			joints[1].rotation.z = -side * 1.6
-			_legs.append(joints[0])
-			_leg_base.append(Vector3(0.0, yaw, roll))
-			joints[0].rotation = Vector3(0.0, yaw, roll)
