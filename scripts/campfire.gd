@@ -1,11 +1,12 @@
 class_name Campfire
 extends Node3D
 ## 山の頂上にある、休むためのたき火。たどり着くと火がともり、そこが次の再開地点になる。
-## 火のついたたき火のまわりは暖かく、化け物は入ってこられない（お札と同じ仕組み）。
+## 火のついたたき火のまわりは暖かく、化け物は入ってこられない（お札と同じ仕組み）。火に向かって E で、食べ物を焼ける。
 
 const LIGHT_DISTANCE := 4.0  # これより近づくと火がつく
 const WARM_RADIUS := 7.0     # 体が温まる範囲
-const SAFE_RADIUS := 9.0     # 化け物が入れない範囲
+const SAFE_RADIUS := 26.0    # 化け物も、襲ってくる獣も入れない範囲（山頂は一息つける場所）
+const REST_RADIUS := 40.0    # これより近くには、化け物を出さない
 
 var lit := false
 var radius := SAFE_RADIUS  # Ward.blocks() が読む
@@ -60,10 +61,21 @@ func set_lit(on: bool) -> void:
 	_light.visible = on
 	if on:
 		add_to_group(Ward.GROUP)
+		add_to_group(&"interactables")  # 火に向かって E で、食べ物を焼ける
 		_crackle.play()
 	else:
 		remove_from_group(Ward.GROUP)
+		remove_from_group(&"interactables")
 		_crackle.stop()
+
+
+func interact_hint(player: Player) -> String:
+	var kind := player.cookable_kind()
+	return "E：焼く　" + Items.NAMES[kind] if kind >= 0 else ""
+
+
+func interact(player: Player) -> void:
+	player.cook()
 
 
 func is_warming(point: Vector3) -> bool:

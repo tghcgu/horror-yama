@@ -15,7 +15,7 @@ var _warning := -1.0
 var _drop_point := Vector3.ZERO
 var _rocks: Array[RigidBody3D] = []
 var _rock_life := {}
-var _trickle: CPUParticles3D
+var _trickle: LazyParticles
 var _sound: AudioStreamPlayer3D
 var _stone: Material
 
@@ -25,19 +25,9 @@ func setup(pos: Vector3, owner_player: Player) -> void:
 	global_position = pos
 	_timer = randf_range(INTERVAL.x, INTERVAL.y)
 	_stone = Psx.material("rock", Color(0.6, 0.58, 0.55), 0.5, 0.4)
-	_trickle = CPUParticles3D.new()
-	_trickle.emitting = false
-	_trickle.amount = 24
-	_trickle.lifetime = 1.4
-	_trickle.emission_shape = CPUParticles3D.EMISSION_SHAPE_SPHERE
-	_trickle.emission_sphere_radius = 1.0
-	_trickle.gravity = Vector3(0.0, -12.0, 0.0)
-	var pebble := BoxMesh.new()
-	pebble.size = Vector3.ONE * 0.06
-	pebble.material = _stone
-	_trickle.mesh = pebble
-	_trickle.top_level = true
+	_trickle = LazyParticles.new()
 	add_child(_trickle)
+	_trickle.setup(_make_trickle)
 	_sound = AudioStreamPlayer3D.new()
 	_sound.stream = Sfx.crumble()
 	_sound.unit_size = 12.0
@@ -55,7 +45,7 @@ func _physics_process(delta: float) -> void:
 	if _warning >= 0.0:
 		_warning -= delta
 		if _warning < 0.0:
-			_trickle.emitting = false
+			_trickle.set_emitting(false)
 			for i in randi_range(2, 3):
 				_drop(_drop_point + Vector3(randf_range(-1.5, 1.5), i * 1.5, randf_range(-1.5, 1.5)))
 		return
@@ -72,8 +62,8 @@ func start_fall() -> void:
 	var outward := player.wall_normal() if player.state == Player.State.CLIMB else Vector3.ZERO
 	_drop_point = player.global_position + Vector3.UP * randf_range(11.0, 15.0) + outward * 0.8
 	_warning = WARNING
-	_trickle.global_position = _drop_point
-	_trickle.emitting = true
+	_trickle.get_particles().global_position = _drop_point
+	_trickle.set_emitting(true)
 	_sound.global_position = _drop_point
 	_sound.play()
 
@@ -129,3 +119,20 @@ func _update_rocks(delta: float) -> void:
 			player.knock(push, ROCK_INJURY)
 			rock.linear_velocity *= 0.3
 			_rock_life[rock] = minf(_rock_life[rock], 2.0)
+
+
+## 粒子を作る（LazyParticles が、使うときにだけ呼ぶ）
+func _make_trickle() -> CPUParticles3D:
+	var particles := CPUParticles3D.new()
+	particles.emitting = false
+	particles.amount = 24
+	particles.lifetime = 1.4
+	particles.emission_shape = CPUParticles3D.EMISSION_SHAPE_SPHERE
+	particles.emission_sphere_radius = 1.0
+	particles.gravity = Vector3(0.0, -12.0, 0.0)
+	var pebble := BoxMesh.new()
+	pebble.size = Vector3.ONE * 0.06
+	pebble.material = _stone
+	particles.mesh = pebble
+	particles.top_level = true
+	return particles

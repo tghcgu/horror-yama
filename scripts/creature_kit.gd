@@ -26,7 +26,7 @@ static func load_model(scene: PackedScene, skin_material: ShaderMaterial, materi
 		for i in mesh.get_surface_count():
 			var original := mesh.surface_get_material(i)
 			var material_name := original.resource_name if original else ""
-			if material_name.ends_with("_skin"):
+			if material_name.ends_with("_skin") or material_name.ends_with("_fur"):
 				if not skins.has(material_name):
 					var skin := skin_material if skins.is_empty() else skin_material.duplicate() as ShaderMaterial
 					var baked := original as BaseMaterial3D

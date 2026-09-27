@@ -4,6 +4,7 @@ extends Node3D
 
 var player: Player
 var radius := 3.5
+var _bubbles: LazyParticles
 
 
 func setup(center: Vector3, bog_radius: float, owner_player: Player) -> void:
@@ -35,24 +36,9 @@ func setup(center: Vector3, bog_radius: float, owner_player: Player) -> void:
 			Vector3(randf_range(-0.2, 0.2), 0.0, randf_range(-0.2, 0.2)), Vector3(1.0, height, 1.0), Color(0.35, 0.38, 0.2))
 	reeds.instance(self, Psx.vertex_material())
 	# ときどき浮かんでくる泡
-	var bubbles := CPUParticles3D.new()
-	bubbles.amount = 6
-	bubbles.lifetime = 1.2
-	bubbles.emission_shape = CPUParticles3D.EMISSION_SHAPE_SPHERE
-	bubbles.emission_sphere_radius = radius * 0.7
-	bubbles.direction = Vector3.UP
-	bubbles.initial_velocity_min = 0.05
-	bubbles.initial_velocity_max = 0.15
-	bubbles.gravity = Vector3.ZERO
-	bubbles.scale_amount_min = 0.5
-	bubbles.scale_amount_max = 1.2
-	var bubble := SphereMesh.new()
-	bubble.radius = 0.06
-	bubble.height = 0.08
-	bubble.material = mud
-	bubbles.mesh = bubble
-	bubbles.position.y = 0.15
-	add_child(bubbles)
+	_bubbles = LazyParticles.new()
+	add_child(_bubbles)
+	_bubbles.setup(_make_bubbles.bind(mud), player, 50.0)
 	var sound := AudioStreamPlayer3D.new()
 	sound.stream = Sfx.bubbles()
 	sound.unit_size = 3.0
@@ -67,3 +53,25 @@ func _physics_process(_delta: float) -> void:
 	var offset := player.global_position - global_position
 	if Vector2(offset.x, offset.z).length() < radius and offset.y < 0.8:
 		player.zone_bog = true
+
+
+## 粒子を作る（LazyParticles が、使うときにだけ呼ぶ）
+func _make_bubbles(mud: Material) -> CPUParticles3D:
+	var particles := CPUParticles3D.new()
+	particles.amount = 6
+	particles.lifetime = 1.2
+	particles.emission_shape = CPUParticles3D.EMISSION_SHAPE_SPHERE
+	particles.emission_sphere_radius = radius * 0.7
+	particles.direction = Vector3.UP
+	particles.initial_velocity_min = 0.05
+	particles.initial_velocity_max = 0.15
+	particles.gravity = Vector3.ZERO
+	particles.scale_amount_min = 0.5
+	particles.scale_amount_max = 1.2
+	var bubble := SphereMesh.new()
+	bubble.radius = 0.06
+	bubble.height = 0.08
+	bubble.material = mud
+	particles.mesh = bubble
+	particles.position.y = 0.15
+	return particles

@@ -293,6 +293,7 @@ def bind_whole(obj, bone):
 
 
 def join(target, parts):
+    select_only(target)  # ほかに選ばれたままの物を、まちがってくっつけないように
     for part in parts:
         part.select_set(True)
     target.select_set(True)

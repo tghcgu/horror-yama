@@ -189,7 +189,7 @@ func _draw_stamina(font: Font, bar: Rect2) -> void:
 
 func _draw_status(font: Font, screen: Vector2) -> void:
 	if in_lobby:
-		draw_string(font, Vector2(0.0, 44.0), "玄関の外のバスに乗ると、山へ出発する", HORIZONTAL_ALIGNMENT_CENTER, screen.x, 16, Color(1, 1, 1, 0.55))
+		draw_string(font, Vector2(0.0, 44.0), "ここは登山訓練場。南のヘリポートのヘリに乗ると、霊峰へ出発する", HORIZONTAL_ALIGNMENT_CENTER, screen.x, 16, Color(1, 1, 1, 0.55))
 		if mirror_hint:
 			draw_string(font, Vector2(0.0, screen.y * 0.5 + 90.0), "E：身だしなみ", HORIZONTAL_ALIGNMENT_CENTER, screen.x, 16, Color(1, 1, 1, 0.85))
 		return
@@ -207,14 +207,14 @@ func _draw_status(font: Font, screen: Vector2) -> void:
 		draw_string(font, Vector2(0.0, 44.0), "日没まで %s" % format_time(left), HORIZONTAL_ALIGNMENT_CENTER, screen.x, 16, color)
 
 
-## 画面下のアイテム欄。数字キーやホイールで選び、右クリックで使う。選んでいるアイテムの名前と使い方も出す
+## 画面下のアイテム欄。数字キーやホイールで手に持ち、左クリックで使う（同じ数字でしまう）。持っているアイテムの名前と使い方も出す
 func _draw_hotbar(font: Font, screen: Vector2) -> void:
 	var inventory := player.inventory
 	var total := Items.SLOTS * SLOT_SIZE + (Items.SLOTS - 1) * SLOT_GAP
 	var left := (screen.x - total) / 2.0
 	var top := screen.y - SLOT_SIZE - 24.0
 	for i in Items.SLOTS:
-		var chosen := i == inventory.selected
+		var chosen := i == inventory.selected and not player.stowed
 		var slot := Rect2(left + i * (SLOT_SIZE + SLOT_GAP), top - (6.0 if chosen else 0.0), SLOT_SIZE, SLOT_SIZE)
 		var kind := inventory.kinds[i]
 		draw_rect(slot, Color(0.0, 0.0, 0.0, 0.6 if chosen else 0.45))
@@ -227,10 +227,10 @@ func _draw_hotbar(font: Font, screen: Vector2) -> void:
 		if kind >= 0 and inventory.counts[i] > 1:
 			draw_string(font, slot.position + Vector2(0.0, SLOT_SIZE - 5.0), "×%d" % inventory.counts[i],
 				HORIZONTAL_ALIGNMENT_RIGHT, SLOT_SIZE - 5.0, 16, Color(1, 1, 1, 0.9))
-	var kind := inventory.selected_kind()
+	var kind := player.holding_kind()
 	if kind >= 0:
 		var name_color := Color(1.0, 0.9, 0.7, 0.9)
-		draw_string(font, Vector2(0.0, top - 34.0), Items.NAMES[kind], HORIZONTAL_ALIGNMENT_CENTER, screen.x, 16, name_color)
+		draw_string(font, Vector2(0.0, top - 34.0), Items.NAMES[kind] + "　（左クリックで使う）", HORIZONTAL_ALIGNMENT_CENTER, screen.x, 16, name_color)
 		draw_string(font, Vector2(0.0, top - 14.0), Items.DESCRIPTIONS[kind], HORIZONTAL_ALIGNMENT_CENTER, screen.x, 16, Color(1, 1, 1, 0.55))
 
 

@@ -6,7 +6,7 @@ extends RefCounted
 enum Id { FOREST, CRAG, SNOW, SUMMIT }
 
 const NAMES := ["樹海", "岩場", "雪山", "霊峰"]
-const FOG_DENSITY := [1.3, 1.0, 1.6, 0.8]  # 基本の霧の濃さに掛ける倍率
+const FOG_DENSITY := [1.0, 1.0, 1.5, 0.8]  # 基本の霧の濃さに掛ける倍率
 const FOG_TINTS := [Color(0.32, 0.4, 0.33), Color(0.5, 0.45, 0.42), Color(0.85, 0.87, 0.92), Color(0.42, 0.3, 0.34)]
 
 

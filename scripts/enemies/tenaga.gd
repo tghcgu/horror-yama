@@ -27,6 +27,7 @@ var _lift := 0.0
 ## tree は杉の根元、tree_scale は杉の大きさ
 func setup(tree: Vector3, tree_scale: float, owner_player: Player, mountain: Terrain) -> void:
 	add_to_group(&"creatures")
+	add_to_group(&"night_monsters")
 	player = owner_player
 	terrain = mountain
 	var perch := 5.8 * tree_scale
@@ -47,6 +48,18 @@ func setup(tree: Vector3, tree_scale: float, owner_player: Player, mountain: Ter
 	_hiss.pitch_scale = 0.6
 	_hiss.unit_size = 8.0
 	add_child(_hiss)
+
+
+## 化け物は夜だけ出る。昼は、杉の上に姿がない
+func set_awake(on: bool) -> void:
+	if not on and (state == "holding" or state == "lifting"):
+		_release(Vector3.ZERO)
+	if not on:
+		state = "waiting"
+		_lift = 0.0
+	_model.visible = on
+	set_physics_process(on)
+	set_process(on)
 
 
 ## 両手のあいだ（つかむ場所）

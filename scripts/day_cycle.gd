@@ -2,15 +2,18 @@ class_name DayCycle
 extends Node
 ## 昼 → 夕暮れ → 夜 → 夜明け をくり返す。空・太陽・月・霧を変化させ、
 ## 真っ暗になったら night_fell、明るくなり始めたら dawn_broke を出す。
+## 朝から少しずつ日が傾いて、だんだん暗くなっていき、夕暮れで一気に暗さが増す（急に暗くはならない）。
 ## 霧は遠くの山がうっすらかすむ程度にとどめ、夜だけ濃く暗くして見通しを悪くする。
 
 signal night_fell
 signal dawn_broke
 
-const DAY_LENGTH := 150.0    # 明るい時間（秒）
-const SUNSET_LENGTH := 35.0  # 夕焼けから真っ暗になるまで（秒）
-const NIGHT_LENGTH := 120.0  # 真っ暗な時間（秒）
-const DAWN_LENGTH := 25.0    # 夜明けから明るくなるまで（秒）
+const DAY_LENGTH := 45.0     # 昼は短い（少しずつ日が傾き、暗くなっていく）（秒）
+const SUNSET_LENGTH := 60.0  # 夕暮れ（夕焼けから真っ暗になるまで）（秒）
+const NIGHT_LENGTH := 140.0  # 真っ暗な時間（秒）
+const DAWN_LENGTH := 30.0    # 夜明けから明るくなるまで（秒）
+const DIMMING := 1.7         # 暗くなり方（大きいほど、はじめはゆっくりで、夕暮れに暗さが増す）
+const MONSTER_DUSK := 0.5    # 夕暮れがこれだけ進むと（暗くなってくると）、化け物が出始める
 const CYCLE := DAY_LENGTH + SUNSET_LENGTH + NIGHT_LENGTH + DAWN_LENGTH
 const SKY_SHADER := preload("res://shaders/psx_sky.gdshader")
 
@@ -26,7 +29,7 @@ const PALETTE := {
 const SUN_ENERGY := [1.15, 0.8, 0.0]
 const SUN_PITCH := [-42.0, -8.0, 6.0]
 const AMBIENT_ENERGY := [0.75, 0.55, 0.35]
-const FOG_DENSITY := [0.0022, 0.004, 0.013]
+const FOG_DENSITY := [0.0009, 0.0025, 0.012]  # 昼はほとんどかすまない
 
 var time := 0.0
 var is_night := false
@@ -101,6 +104,12 @@ func seconds_until_night() -> float:
 	return until if until > 0.0 else until + CYCLE
 
 
+## 化け物が出る時間か（夕暮れで暗くなってきてから、夜が明けるまで）
+func monsters_out() -> bool:
+	var phase := fmod(time, CYCLE)
+	return phase >= DAY_LENGTH + SUNSET_LENGTH * MONSTER_DUSK and phase < DAY_LENGTH + SUNSET_LENGTH + NIGHT_LENGTH
+
+
 ## 夜が明け始めるまでの秒数（夜のあいだだけ意味がある）
 func seconds_until_dawn() -> float:
 	return maxf(DAY_LENGTH + SUNSET_LENGTH + NIGHT_LENGTH - fmod(time, CYCLE), 0.0)
@@ -122,18 +131,22 @@ func set_indoor(on: bool) -> void:
 	_target_indoor = 1.0 if on else 0.0
 
 
-## 1 周期の中の位置から、暗さ（0〜1）を求める
+## 1 周期の中の位置から、暗さ（0〜1）を求める。朝からずっと、少しずつ暗くなっていく
 func _darkness_at(t: float) -> float:
 	var phase := fmod(t, CYCLE)
-	if phase < DAY_LENGTH:
-		return 0.0
-	phase -= DAY_LENGTH
-	if phase < SUNSET_LENGTH:
-		return phase / SUNSET_LENGTH
-	phase -= SUNSET_LENGTH
+	var dusk := DAY_LENGTH + SUNSET_LENGTH
+	if phase < dusk:
+		return pow(phase / dusk, DIMMING)
+	phase -= dusk
 	if phase < NIGHT_LENGTH:
 		return 1.0
-	return 1.0 - (phase - NIGHT_LENGTH) / DAWN_LENGTH
+	var t_dawn := (phase - NIGHT_LENGTH) / DAWN_LENGTH
+	return 1.0 - t_dawn * t_dawn * (3.0 - 2.0 * t_dawn)
+
+
+## いまの霧の色（まだ行けないステージを隠す霧も、この色にする）
+func fog_color() -> Color:
+	return _environment.fog_light_color
 
 
 func _process(delta: float) -> void:

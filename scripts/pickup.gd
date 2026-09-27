@@ -15,6 +15,8 @@ const PURIFY_RADIUS := 9.0
 
 var kind := 0
 var lit := false
+var thrower: Node3D   # 投げた人（当たった獣や化け物に、傷を負わせる）
+var _armed := false   # 投げたばかりで、まだ何にも当たっていない
 var radius := 0.0  # 燃えている発煙筒の守りの円（Ward.blocks が読む）
 
 var _time_left := 0.0
@@ -30,7 +32,7 @@ func setup(item_kind: int, activated := false) -> void:
 	lit = activated
 	add_to_group(GROUP)
 	collision_layer = ITEM_LAYER
-	collision_mask = Player.TERRAIN_LAYER | ITEM_LAYER
+	collision_mask = Player.TERRAIN_LAYER | ITEM_LAYER | Player.BARRIER_LAYER  # 見えない壁の向こうへは、投げても届かない
 	continuous_cd = true
 	angular_damp = 0.6
 	var surface := PhysicsMaterial.new()
@@ -79,10 +81,18 @@ func setup(item_kind: int, activated := false) -> void:
 			body_entered.connect(func(_body: Node) -> void: _landed = true)
 
 
+## 投げつけた物にする：飛んでいる間に獣や化け物に当たると、傷を負わせる
+func arm(by: Node3D) -> void:
+	thrower = by
+	_armed = true
+
+
 func _physics_process(delta: float) -> void:
 	if global_position.y < -60.0:
 		queue_free()
 		return
+	if _armed:
+		_check_throw_hit()
 	if not lit:
 		return
 	_time_left -= delta
@@ -97,6 +107,30 @@ func _physics_process(delta: float) -> void:
 		Items.Kind.SALT:
 			if _landed or _time_left <= 0.0:
 				_purify()
+
+
+## 飛んでいる間、獣や化け物に当たったか調べる。当たったら、アイテムと速さに応じた傷を負わせて、はね返る
+func _check_throw_hit() -> void:
+	var speed := linear_velocity.length()
+	if speed < 3.0:
+		_armed = false  # 勢いがなくなった
+		return
+	for group in [&"huntable", &"creatures"]:
+		for node: Node in get_tree().get_nodes_in_group(group):
+			var body := node as Node3D
+			if body == thrower or not Combat.can_strike(body):
+				continue
+			var center := Combat.body_center(body)
+			if center.distance_to(global_position) > Combat.body_radius(body) + 0.25:
+				continue
+			_armed = false
+			var damage: float = Items.THROW_DAMAGE[kind] * clampf(speed / 9.0, 0.5, 1.8)
+			Combat.strike(body, damage, thrower, global_position, kind in Items.HOLY)
+			linear_velocity = -linear_velocity * 0.2 + Vector3.UP * 1.5  # はね返る
+			if thrower is Player:
+				(thrower as Player).play_hit_sound()
+				(thrower as Player).last_struck = body
+			return
 
 
 ## 爆竹がはじけた：まわりの化け物がみんな逃げていく

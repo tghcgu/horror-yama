@@ -2,7 +2,7 @@ extends Node
 ## 開発用の自動テスト。ゲームを起動したまま各機能を順に試し、結果を表示して終了する。
 ## 実行例: godot --path . -- --autotest [--shot-dir=<スクリーンショットの保存先>]
 
-const TEST_SEED := 20260926  # テストでは毎回同じ山を作る
+const TEST_SEED := Main.WORLD_SEED  # 遊ぶときと同じ山を調べる
 
 var _main: Main
 var _shot_dir := ""
@@ -14,6 +14,7 @@ var _start_msec := 0
 func _ready() -> void:
 	process_mode = Node.PROCESS_MODE_ALWAYS
 	seed(12345)
+	Settings.persist = false  # 遊ぶ人の設定を書きかえない
 	_main = get_parent() as Main
 	for arg in OS.get_cmdline_user_args():
 		if arg.begins_with("--shot-dir="):
@@ -25,6 +26,14 @@ func _ready() -> void:
 	_main.player.hurt.connect(_note.bind("player hurt"))
 	_main.player.chilled.connect(_note.bind("player chilled"))
 	_run.call_deferred()
+
+
+## --only=stages,items のように指定したら、その項目だけ流す（指定がなければすべて）
+func _wants(name: String) -> bool:
+	for arg in OS.get_cmdline_user_args():
+		if arg.begins_with("--only="):
+			return name in arg.trim_prefix("--only=").split(",")
+	return true
 
 
 ## テスト中は本物のマウスを無視する（画面ありで流すと、マウスの動きで視点が回ってしまう）
@@ -40,37 +49,388 @@ func _run() -> void:
 		await _measure_performance()
 		_finish()
 		return
-	await _test_lobby()
+	await _test_lobby()  # 山を作るので、いつも流す
+	if _wants("stages"):
+		await _test_stages()
+	if _shot_dir != "" and _wants("look"):
+		await _look_shots()
 	if _shot_dir != "":
 		await _overview_shot()
 		await _biome_shots()
-	await _test_chain_shape()
-	await _test_climb_and_night()
-	await _test_checkpoint()
-	await _test_afflictions()
-	await _test_dawn()
-	await _test_items()
-	await _test_physics_items()
-	await _test_sliding()
-	await _test_gimmicks()
-	await _test_new_enemies()
-	await _test_piton()
-	await _test_ward()
-	await _test_spider()
-	await _test_peeker()
-	await _test_pale_one()
-	await _test_fly()
-	await _test_menu()
+	if _wants("chain_shape"):
+		await _test_chain_shape()
+	if _wants("climb_and_night"):
+		await _test_climb_and_night()
+	if _wants("checkpoint"):
+		await _test_checkpoint()
+	if _wants("afflictions"):
+		await _test_afflictions()
+	if _wants("dawn"):
+		await _test_dawn()
+	if _wants("items"):
+		await _test_items()
+	if _wants("physics_items"):
+		await _test_physics_items()
+	if _wants("sliding"):
+		await _test_sliding()
+	if _wants("gimmicks"):
+		await _test_gimmicks()
+	if _wants("new_enemies"):
+		await _test_new_enemies()
+	if _wants("piton"):
+		await _test_piton()
+	if _wants("ward"):
+		await _test_ward()
+	if _wants("spider"):
+		await _test_spider()
+	if _wants("peeker"):
+		await _test_peeker()
+	if _wants("pale_one"):
+		await _test_pale_one()
+	if _wants("fly"):
+		await _test_fly()
+	if _wants("social"):
+		await _test_social()
+	if _wants("hunting"):
+		await _test_hunting()
+	if _wants("critters"):
+		await _test_critters()
+	if "--only=lamp" in OS.get_cmdline_user_args():
+		await _test_lamp()
+	if _wants("combat"):
+		await _test_combat()
+	if _wants("mountain_props"):
+		await _test_mountain_props()
+	if _wants("night_monsters"):
+		await _test_night_monsters()
+	if "--only=census" in OS.get_cmdline_user_args():
+		await _test_census()
+	if _wants("menu"):
+		await _test_menu()
 	_finish()
 
 
 # --- 各テスト ---
+
+## 戦う：ナタは押しっぱなしで振り続ける、素手で殴る、投げた物が当たると傷を負う（Q をためると強く飛ぶ）、
+## 熊も倒せる。引っかかる段差は、跳ぶと手をかけて乗り越える
+func _test_combat() -> void:
+	_section("combat")
+	await _restart()
+	_calm_weather()
+	_calm_enemies()
+	var player := _main.player
+	var terrain := _main.terrain
+	var director := _main.critters
+	director.clear()
+	var here := terrain.spawn_point()
+	player.spawn_at(here, 0.0)
+	await _wait(0.3)
+	var place := func(kind: String, distance: float) -> Critter:
+		var at := here + Vector3(0.0, 0.0, -distance)
+		at.y = terrain.height_at(at.x, at.z)
+		var critter := Critter.new()
+		director.add_child(critter)
+		critter.setup(kind, at, player, terrain)
+		critter.set_physics_process(false)  # 動かないようにして試す
+		player.face_point(critter.hit_center())
+		return critter
+	# ナタを押しっぱなし：何度も振る
+	player.inventory.selected = player.inventory.slot_of(Items.Kind.NATA)
+	player.stowed = false
+	var deer: Critter = place.call("deer", 1.9)
+	await _wait(0.2)
+	Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
+	var held_mouse := Input.mouse_mode == Input.MOUSE_MODE_CAPTURED
+	var stamina := player.stamina
+	if held_mouse:
+		Input.action_press("use_item")
+		await _wait(1.0)
+		Input.action_release("use_item")
+		_check("holding the button keeps swinging the machete", deer.dead, "health %.0f" % deer.health)
+	else:
+		for i in 3:
+			_tap("use_item")
+			await _wait(0.5)
+		_note("mouse can not be captured here: swung by clicks")
+		_check("swinging the machete kills a deer", deer.dead, "health %.0f" % deer.health)
+	_check("swinging uses stamina", player.stamina < stamina)
+	# 人熊も倒せる（とても打たれ強い）。倒すと、熊の胆がとれる
+	var bear_at := here + Vector3(0.0, 0.0, -2.6)
+	bear_at.y = terrain.height_at(bear_at.x, bear_at.z)
+	var bear := Hitokuma.new()
+	director.add_child(bear)
+	bear.setup(bear_at, player, terrain)
+	bear.set_physics_process(false)
+	player.face_point(bear.hit_center())
+	if _shot_dir != "":
+		bear.state = "roar"
+		await _wait(0.6)
+		var bear_front := -bear.global_transform.basis.z
+		await _shot_from(bear.global_position + bear_front * 5.5 + Vector3.UP * 1.6, bear.hit_center() + Vector3.UP * 0.3, "hitokuma.png", true)
+		bear.state = "stalk"
+	var bear_health := bear.health
+	for i in 40:
+		if bear.dead:
+			break
+		player.face_point(bear.hit_center())
+		player.set("_swing_cooldown", 0.0)
+		_tap("use_item")
+		await _wait(0.3)
+	_check("the humanoid bear can be killed with the machete", bear.dead, "health %.0f / %.0f" % [bear.health, bear_health])
+	player.inventory.clear()
+	bear.interact(player)
+	_check("the humanoid bear gives bear bile", player.inventory.count_of(Items.Kind.KUMANOI) == 1)
+	player.injury = 30.0
+	player.inventory.selected = player.inventory.slot_of(Items.Kind.KUMANOI)
+	player.stowed = false
+	player.use_selected()
+	_check("bear bile heals everything", player.injury == 0.0 and player.boost_time > 60.0)
+	player.inventory.clear()
+	for kind: int in Items.STARTING:
+		player.inventory.add(kind)
+	player.inventory.selected = player.inventory.slot_of(Items.Kind.NATA)
+	bear.queue_free()
+	deer.queue_free()
+	# 化け物には、ナタはあまり効かない（亡者は一振りでは消えない）
+	var wanderer: Wanderer = _main.enemies.wanderers[0]
+	var ghost_at := here + Vector3(0.0, 0.0, -2.0)
+	ghost_at.y = terrain.height_at(ghost_at.x, ghost_at.z)
+	wanderer.appear(ghost_at, player, terrain)
+	player.face_point(Combat.body_center(wanderer))
+	player.set("_swing_cooldown", 0.0)
+	_tap("use_item")
+	await _wait(0.4)
+	_check("monsters shrug off the machete", wanderer.active)
+	wanderer.vanish()
+	# 野犬：近くに肉を投げると食べに来て、なつく
+	var dog := Critter.new()
+	director.add_child(dog)
+	var dog_at := here + Vector3(6.0, 0.0, 0.0)
+	dog_at.y = terrain.height_at(dog_at.x, dog_at.z)
+	dog.setup("dog", dog_at, player, terrain)
+	var meat_at := here + Vector3(4.0, 1.0, 0.0)
+	_main.features.spawn_item(Items.Kind.RAW_MEAT, meat_at, Vector3.ZERO)
+	for i in 60:
+		await _wait(0.1)
+		if dog.tamed:
+			break
+	_check("a wild dog is tamed with food", dog.tamed, "state %s" % dog.state)
+	player.global_position += Vector3(8.0, 0.0, 0.0)
+	await _wait(2.0)
+	_check("the tamed dog follows you", dog.global_position.distance_to(player.global_position) < 8.0, "%.1f m" % dog.global_position.distance_to(player.global_position))
+	# いっしょに戦う：プレイヤーが叩いた獣に、犬も噛みつく
+	var prey_at := player.global_position + Vector3(0.0, 0.0, -3.0)
+	prey_at.y = terrain.height_at(prey_at.x, prey_at.z)
+	var prey := Critter.new()
+	director.add_child(prey)
+	prey.setup("tanuki", prey_at, player, terrain)
+	prey.set_physics_process(false)
+	player.last_struck = prey
+	var prey_health := prey.health
+	for i in 40:
+		await _wait(0.1)
+		if prey.health < prey_health:
+			break
+	_check("the tamed dog attacks what you attack", prey.health < prey_health, "health %.0f -> %.0f" % [prey_health, prey.health])
+	_check("animal sounds go to the animals volume", (prey.get("_voice") as AudioStreamPlayer3D).bus == &"Animals")
+	_check("animal sounds do not loop", not (prey.get("_voice") as AudioStreamPlayer3D).stream.loop_mode if (prey.get("_voice") as AudioStreamPlayer3D).stream is AudioStreamWAV else true)
+	prey.queue_free()
+	dog.queue_free()
+	player.spawn_at(here, 0.0)
+	await _wait(0.3)
+	# 素手で殴る
+	player.stowed = true
+	var tanuki: Critter = place.call("tanuki", 1.3)
+	await _wait(0.2)
+	var before := tanuki.health
+	player.set("_swing_cooldown", 0.0)
+	_tap("use_item")
+	await _wait(0.4)
+	if not held_mouse:
+		player.call("_punch")  # 画面なしでは、左クリックの押しっぱなしが読めない
+		await _wait(0.3)
+	_check("punching with bare hands hurts an animal", tanuki.health < before, "health %.0f -> %.0f" % [before, tanuki.health])
+	tanuki.queue_free()
+	# 投げつける：重い物ほど痛い。Q をためると強く飛ぶ
+	player.stowed = false
+	var boar: Critter = place.call("boar", 5.0)
+	await _wait(0.2)
+	player.inventory.clear()
+	player.inventory.add(Items.Kind.CANNED)
+	player.inventory.add(Items.Kind.BERRIES)
+	player.inventory.selected = player.inventory.slot_of(Items.Kind.CANNED)
+	player.face_point(boar.hit_center())
+	before = boar.health
+	var press := InputEventAction.new()
+	press.action = "throw"
+	press.pressed = true
+	Input.parse_input_event(press)
+	await _wait(1.0)
+	_check("holding Q charges the throw", player.throw_charge > 0.9, "charge %.2f" % player.throw_charge)
+	var release := InputEventAction.new()
+	release.action = "throw"
+	release.pressed = false
+	Input.parse_input_event(release)
+	await _wait(0.8)
+	var canned_hit := before - boar.health
+	_check("a thrown can hurts the boar", canned_hit > 15.0, "damage %.0f" % canned_hit)
+	boar.set_physics_process(false)
+	boar.state = "idle"
+	player.inventory.selected = player.inventory.slot_of(Items.Kind.BERRIES)
+	player.face_point(boar.hit_center())
+	before = boar.health
+	player.throw_selected(1.0)
+	await _wait(0.8)
+	_check("light things hurt less than heavy things", before - boar.health < canned_hit * 0.3, "berries %.1f vs can %.1f" % [before - boar.health, canned_hit])
+	boar.queue_free()
+	# 引っかかる段差：跳ぶと、手をかけて乗り越える
+	player.spawn_at(here, 0.0)
+	await _wait(0.4)
+	var block := StaticBody3D.new()
+	var shape := CollisionShape3D.new()
+	var box := BoxShape3D.new()
+	box.size = Vector3(3.0, 1.5, 2.0)
+	shape.shape = box
+	block.add_child(shape)
+	_main.add_child(block)
+	var forward := -player.global_transform.basis.z
+	block.global_position = player.global_position + forward * 1.9 + Vector3.UP * 0.75
+	block.rotation.y = player.rotation.y
+	await _wait(0.2)
+	Input.action_press("move_forward")
+	Input.action_press("jump")
+	var top := block.global_position.y + 0.75
+	var on_top := false
+	for i in 12:
+		await _wait(0.1)
+		if player.is_on_floor() and player.global_position.y > top - 0.2:
+			on_top = true
+			break
+	Input.action_release("jump")
+	Input.action_release("move_forward")
+	_check("jumping at a ledge climbs over it", on_top, "%.2f m below the top" % (top - player.global_position.y))
+	block.queue_free()
+	player.inventory.clear()
+	for kind: int in Items.STARTING:
+		player.inventory.add(kind)
+
+## ヘッドライト：夜に F で点けると、目の前が明るくなる（画面ありで流す）
+func _test_lamp() -> void:
+	_section("headlamp")
+	await _restart()
+	_calm_weather()
+	_calm_enemies()
+	var player := _main.player
+	_main.day.time = DayCycle.DAY_LENGTH + DayCycle.SUNSET_LENGTH + 20.0
+	await _wait(2.0)
+	player.spawn_at(_main.terrain.spawn_point(), _main.terrain.spawn_yaw())
+	player.set_headlamp(false)
+	await _wait(1.0)
+	player.face_point(player.get_camera().global_position + (-player.global_transform.basis.z) * 5.0 - Vector3.UP * 2.0)
+	await _wait(0.5)
+	var dark := await _screen_brightness()
+	if _shot_dir != "":
+		await _save_shot("lamp_off.png")
+	_tap("toggle_lamp")
+	await _wait(0.5)
+	var lit := await _screen_brightness()
+	if _shot_dir != "":
+		await _save_shot("lamp_on.png")
+	_check("F turns the headlamp on", player.is_headlamp_on())
+	_check("the headlamp lights up the ground ahead", lit > dark * 1.5 + 0.02, "brightness %.3f -> %.3f" % [dark, lit])
+
+
+func _screen_brightness() -> float:
+	await RenderingServer.frame_post_draw
+	await RenderingServer.frame_post_draw
+	var image := get_viewport().get_texture().get_image()
+	var total := 0.0
+	var count := 0
+	for y in range(image.get_height() / 3, image.get_height() * 2 / 3, 4):
+		for x in range(image.get_width() / 3, image.get_width() * 2 / 3, 4):
+			total += image.get_pixel(x, y).get_luminance()
+			count += 1
+	return total / maxf(count, 1.0)
+
+## 山の上の造形物と箱：登る途中にも、見つける物がたくさんある
+func _test_mountain_props() -> void:
+	_section("mountain props")
+	await _restart()
+	var features := _main.features
+	var total := 0
+	var first_kinds := 0
+	for prop_name: String in features.mountain_props:
+		var list: Array = features.mountain_props[prop_name]
+		total += list.size()
+		if list.any(func(t: Transform3D) -> bool: return _main.terrain.stage_of(t.origin) == 0):
+			first_kinds += 1
+	var counts := {}
+	for prop_name: String in features.mountain_props:
+		counts[prop_name] = (features.mountain_props[prop_name] as Array).size()
+	_note("mountain props %s" % str(counts))
+	_check("many objects stand on the mountains", total >= 150, "%d objects" % total)
+	_check("the first mountain has many kinds of objects", first_kinds >= 12, "%d kinds" % first_kinds)
+	var above: float = MountainChain.bases[0] + MountainFeatures.MOUNTAIN_ABOVE
+	var boxes := features.get_children().filter(func(n: Node) -> bool:
+		return n is ItemBox and _main.terrain.stage_of(n.global_position) == 0 and (n as Node3D).global_position.y > above)
+	_check("item boxes lie on the mountain too", boxes.size() >= 20, "%d boxes on the first mountain" % boxes.size())
+	# 亡骸の遺品をさがす
+	var belongings: Harvestable = null
+	for node in features.get_children():
+		if node is Harvestable and (node as Harvestable).label == "遺品をさがす" and _main.terrain.stage_of(node.global_position) == 0:
+			belongings = node
+			break
+	_check("remains lie on the first mountain", belongings != null)
+	if belongings:
+		var player := _main.player
+		player.inventory.clear()
+		player.spawn_at(belongings.global_position + Vector3(0.0, 0.5, 1.2), 0.0)
+		await _wait(0.3)
+		belongings.interact(player)
+		_check("searching the remains finds something", Array(player.inventory.kinds).any(func(k: int) -> bool: return k != -1) and not belongings.is_ripe())
+
+
+## 化け物は、日が暮れてから夜明けまでしか出ない
+func _test_night_monsters() -> void:
+	_section("night monsters")
+	await _restart()
+	var enemies := _main.enemies
+	var day := _main.day
+	var spider: CragSpider = _first(CragSpider)
+	day.time = 20.0
+	await _wait(0.5)
+	_check("no monsters in the daytime", not day.monsters_out() and enemies.wanderers.all(func(w: Wanderer) -> bool: return not w.active)
+		and not spider.get("_model").visible)
+	day.time = DayCycle.DAY_LENGTH + DayCycle.SUNSET_LENGTH * 0.8
+	await _wait(0.5)
+	_check("monsters come out as it gets dark", day.monsters_out() and spider.get("_model").visible and spider.is_physics_processing())
+	enemies.spawn_wanderer()
+	enemies.spawn_onibi(2)
+	await _wait(0.3)
+	_check("monsters roam at dusk", enemies.wanderers.any(func(w: Wanderer) -> bool: return w.active))
+	day.time = DayCycle.DAY_LENGTH + DayCycle.SUNSET_LENGTH + DayCycle.NIGHT_LENGTH + 0.5
+	await _wait(0.5)
+	# 山頂のたき火のまわりは、一息つける：化け物は出ない
+	day.time = DayCycle.DAY_LENGTH + DayCycle.SUNSET_LENGTH + 20.0
+	_main.player.spawn_at(_main.features.campfires[1].global_position + Vector3(0.0, 0.5, 2.0), 0.0)
+	enemies.set("_cooldowns", {})
+	await _wait(3.0)
+	var anything := enemies.wanderers.any(func(w: Wanderer) -> bool: return w.active) or enemies.onibi.any(func(o: Onibi) -> bool: return o.active)
+	_check("no monsters come near a summit campfire", not anything)
+	day.time = DayCycle.DAY_LENGTH + DayCycle.SUNSET_LENGTH + DayCycle.NIGHT_LENGTH + 0.5
+	await _wait(0.5)
+	_check("dawn sends the monsters away", not day.monsters_out() and enemies.wanderers.all(func(w: Wanderer) -> bool: return not w.active)
+		and enemies.onibi.all(func(o: Onibi) -> bool: return not o.active) and not spider.get("_model").visible)
+	day.time = 20.0
 
 ## ボットに崖を登らせ、夜にしてから休ませる。“何か”が追いついてくるか
 func _test_climb_and_night() -> void:
 	_section("climb and night")
 	await _restart()
 	var player := _main.player
+	player.spawn_at(_main.terrain.foot_point(0), _main.terrain.foot_yaw(0))
+	_main.checkpoint = MountainChain.COUNT - 1  # “何か”は最後の山にしか出ないので、最後のステージにいることにする
 	_main.day.time = DayCycle.DAY_LENGTH + DayCycle.SUNSET_LENGTH - 8.0
 	Input.action_press("move_forward")
 	Input.action_press("grab")
@@ -110,10 +470,84 @@ func _test_climb_and_night() -> void:
 
 ## ホテルのロビーから始まり、鏡に自分が映り、時間は止まっている。
 ## 鏡の前で身だしなみの色を変えると体の色が変わる。バスに乗ると山ができて、登山口に降り立つ
+## 訓練場：登りの壁を登れる、道具置き場から道具を取れる、巻藁を叩ける、的に当てられる
+func _test_training(player: Player) -> void:
+	var room := _main.lobby
+	# 登りの壁
+	player.spawn_at(room.to_global(Vector3(-24.0, 0.05, 7.4)), room.rotation.y)
+	await _wait(0.3)
+	player.face_point(room.to_global(Vector3(-24.0, 3.0, 4.0)))
+	Input.action_press("move_forward")
+	Input.action_press("grab")
+	var start_y := player.global_position.y
+	for i in 60:
+		await _wait(0.1)
+		if player.global_position.y > start_y + 8.5:
+			break
+	Input.action_release("move_forward")
+	Input.action_release("grab")
+	_check("you can climb the practice wall", player.global_position.y > start_y + 5.0, "%.1f m up" % (player.global_position.y - start_y))
+	# 道具置き場
+	player.inventory.clear()
+	var racks := room.get_children().filter(func(n: Node) -> bool: return n.has_method("interact") and n.get("kind") != null)
+	_check("every item lies on the practice tables", racks.size() == Items.COUNT, "%d racks" % racks.size())
+	var crampons: Node3D = racks.filter(func(n: Node) -> bool: return n.get("kind") == Items.Kind.CRAMPONS)[0]
+	crampons.call("interact", player)
+	crampons.call("interact", player)
+	_check("items can be taken again and again", player.inventory.count_of(Items.Kind.CRAMPONS) == 2)
+	# 巻藁
+	var dummies := room.get_children().filter(func(n: Node) -> bool: return n.has_method("hit") and n.get("total") != null)
+	var dummy: Node3D = dummies[0]
+	player.spawn_at(dummy.global_position + room.global_transform.basis.z * 1.6, room.rotation.y)
+	await _wait(0.3)
+	player.inventory.clear()  # （spawn_at は持ち物を最初の道具に戻すので、そのあとで持たせる）
+	player.inventory.add(Items.Kind.NATA)
+	player.inventory.selected = 0
+	player.stowed = false
+	player.face_point(dummy.call("hit_center"))
+	_tap("use_item")
+	await _wait(0.5)
+	_check("the machete hits the straw dummy", float(dummy.get("total")) > 0.0, "total %.0f" % float(dummy.get("total")))
+	# 的当て
+	var targets := room.get_children().filter(func(n: Node) -> bool: return n.has_method("hit") and n.get("hits") != null)
+	var target: Node3D = targets[0]
+	player.spawn_at(room.to_global(Vector3(target.position.x, 0.05, 12.0)), room.rotation.y)
+	await _wait(0.3)
+	player.inventory.clear()
+	player.inventory.add(Items.Kind.CANNED)
+	player.inventory.selected = 0
+	player.face_point(target.call("hit_center") + Vector3.UP * 0.4)
+	player.throw_selected(0.6)
+	for i in 20:
+		await _wait(0.1)
+		if int(target.get("hits")) > 0:
+			break
+	_check("a thrown item hits the target", int(target.get("hits")) > 0)
+	# たき火に向かって E で食べ物を焼く：焼いた物になって、持ち運べる
+	player.spawn_at(room.campfire.global_position + room.global_transform.basis.z * 1.6, room.rotation.y)
+	await _wait(0.3)
+	player.face_point(room.campfire.global_position)
+	player.inventory.clear()
+	player.inventory.add(Items.Kind.RAW_MEAT)
+	player.inventory.add(Items.Kind.MUSHROOM)
+	player.inventory.selected = 0
+	player.stowed = false
+	await _wait(0.1)
+	_check("facing the fire offers to cook", player.aimed == room.campfire and player.aim_hint().contains("生肉"), player.aim_hint())
+	player.interact()
+	player.interact()
+	await _wait(0.1)
+	_check("raw meat is cooked at a lit fire and can be carried", player.inventory.count_of(Items.Kind.COOKED_MEAT) == 1 and player.inventory.count_of(Items.Kind.RAW_MEAT) == 0)
+	_check("other food can be cooked too", player.inventory.count_of(Items.Kind.GRILLED_MUSHROOM) == 1 and player.inventory.count_of(Items.Kind.MUSHROOM) == 0)
+	_check("boxes hold only man-made things", range(200).all(func(_i: int) -> bool: return not Items.pick_random(RandomNumberGenerator.new()) in Items.NOT_IN_BOXES))
+	player.spawn_at(room.spawn_position, room.spawn_yaw)
+	await _wait(0.3)
+
+
 func _test_lobby() -> void:
 	_section("lobby")
 	var player := _main.player
-	_check("the game starts in the hotel lobby", _main.run_state == Main.RunState.LOBBY and _main.lobby.contains(player.global_position))
+	_check("the game starts in the training ground", _main.run_state == Main.RunState.LOBBY and _main.lobby.contains(player.global_position))
 	var time := _main.day.time
 	await _wait(1.0)
 	_check("time stands still in the lobby", _main.day.time == time)
@@ -127,10 +561,24 @@ func _test_lobby() -> void:
 	await _wait(0.3)
 	_check("E opens the dressing menu", _main.appearance.is_open())
 	var jacket := Settings.jacket_color
-	_main.appearance.call("_choose", "jacket", (jacket + 3) % Appearance.COLORS.size())
+	_main.appearance.call("_choose", "jacket_color", (jacket + 3) % Appearance.COLORS.size())
 	var body_material: ShaderMaterial = player.get_node("Body").get("_tinted")["jacket"][0]
 	var tint: Color = body_material.get_shader_parameter("albedo")
 	_check("choosing a color repaints the jacket", tint.is_equal_approx(Appearance.tint_of("jacket")) and Settings.jacket_color != jacket)
+	# 形の着せ替え：帽子を次の形にすると、その帽子だけが見える
+	var hat_before := Settings.hat_style
+	Settings.hat_style = 0
+	_main.appearance.call("_step_style", "hat", 1)
+	var model: Node = player.get_node("Body").get("_model")
+	var hats := model.find_children("Hat_*", "MeshInstance3D", true, false)
+	var shown := hats.filter(func(m: MeshInstance3D) -> bool: return m.visible)
+	_check("changing the hat shows only the chosen hat", hats.size() >= 6 and shown.size() == 1
+		and String(shown[0].name) == "Hat_" + Appearance.style_of("hat"), "%d hats, %s" % [hats.size(), shown.map(func(m: Node) -> String: return m.name)])
+	_main.appearance.call("_choose", "skin_tone", 4)
+	var skin_material: ShaderMaterial = player.get_node("Body").get("_tinted")["skin"][0]
+	_check("choosing a skin tone repaints the face", (skin_material.get_shader_parameter("albedo") as Color).is_equal_approx(Appearance.skin_tint()))
+	Settings.hat_style = hat_before
+	Settings.apply()
 	if _shot_dir != "":
 		await _save_shot("dressing.png")
 	_main.appearance.close()
@@ -138,12 +586,16 @@ func _test_lobby() -> void:
 	if _shot_dir != "":
 		await _save_shot("lobby_mirror.png")
 		var room := _main.lobby
-		await _shot_from(room.to_global(Vector3(-5.5, 3.0, 4.6)), room.to_global(Vector3(3.0, 1.2, -1.5)), "lobby_wide.png")
-		await _shot_from(room.to_global(Vector3(-3.0, 1.6, 4.8)), room.to_global(Vector3(1.0, 1.5, 12.0)), "lobby_bus.png")
-	# 玄関を出て、バスの扉まで行く
-	player.global_position = _main.lobby.get("_bus_door") + Vector3(0.0, 0.3, 0.0)
+		await _shot_from(room.to_global(Vector3(0.0, 9.0, 40.0)), room.to_global(Vector3(0.0, 2.0, 0.0)), "lobby_wide.png")
+		await _shot_from(room.to_global(Vector3(-20.0, 6.0, 20.0)), room.to_global(Vector3(-24.0, 4.0, 4.0)), "lobby_climb.png")
+		await _shot_from(room.to_global(Vector3(20.0, 4.0, 30.0)), room.to_global(Vector3(20.0, 1.0, 22.0)), "lobby_items.png")
+		await _shot_from(room.to_global(Vector3(46.0, 4.0, 26.0)), room.to_global(Vector3(46.0, 1.5, 10.0)), "lobby_targets.png")
+		await _shot_from(room.to_global(Vector3(4.0, 4.0, 42.0)), room.to_global(Vector3(14.0, 1.5, 54.0)), "lobby_heli.png")
+	await _test_training(player)
+	# ヘリポートへ行き、ヘリの扉まで行く
+	player.global_position = _main.lobby.get("_board_point") + Vector3(0.0, 0.3, 0.0)
 	var departed := await _wait_for_climb()
-	_check("boarding the bus builds the mountain and starts the climb", departed)
+	_check("boarding the helicopter builds the mountain and starts the climb", departed)
 	var start := _main.terrain.spawn_point()
 	_check("arrived at the trailhead", player.global_position.distance_to(start) < 3.0,
 		"%.1f m from the trailhead" % player.global_position.distance_to(start))
@@ -153,10 +605,168 @@ func _test_lobby() -> void:
 		await _save_shot("trailhead.png")
 
 
+## 最初は最初のステージ（平地と山）だけが霧の外にある。山頂のたき火に火をともすと、その先の霧が晴れて、
+## 次のステージの置き物も現れる。霧の奥へは入れない。地形はひとつながりで、宙に浮いた所はない。
+## “何か”は最後の山でだけ追ってくる
+func _test_stages() -> void:
+	_section("stages")
+	var terrain := _main.terrain
+	var player := _main.player
+	var fog := _main.fog
+	_check("the next stages are hidden in fog at the start", MountainChain.unlocked == 1 and not fog.is_opened(1) and fog.visible)
+	_check("only the first stage is built at the start", terrain.has_stage(0) and not terrain.has_stage(1) and _main.features.has_stage(0) and not _main.features.has_stage(1)
+		and not _main.features.get_children().any(func(n: Node) -> bool: return n is CragSpider))
+	# 地形はひとつながり：ステージの横へずっと離れていっても、足もとに地面があり、ふもとの低地まで下りていく
+	terrain.ensure_all_collision()
+	await _wait(0.1)
+	var space := player.get_world_3d().direct_space_state
+	var floating := 0
+	var probes := 0
+	var lowest_edge := INF
+	var misses: Array[String] = []
+	for i in range(1, MountainChain.COUNT):
+		var middle := MountainChain.plain_starts[i].lerp(MountainChain.plain_ends[i], 0.5)
+		var side := MountainChain.gate_direction(i).orthogonal()
+		for sign_value: float in [-1.0, 1.0]:
+			var previous := INF
+			var area := MountainChain.bounds().grow(-6.0)
+			for n in range(1, 80):
+				var p := middle + side * sign_value * n * 8.0
+				if not area.has_point(p):
+					break  # 地形の外（ふもとの低地がどこまでも続く）
+				# 大岩や木は通り抜けて、地面そのものに当たるまで調べる
+				var query := PhysicsRayQueryParameters3D.create(Vector3(p.x, 1400.0, p.y), Vector3(p.x, -50.0, p.y), Player.TERRAIN_LAYER)
+				var hit := space.intersect_ray(query)
+				for skip in 6:
+					if hit.is_empty() or (hit.collider as Node).get_parent() == terrain.ground_body() or (hit.collider as Node).get_parent() == terrain:
+						break
+					query.exclude = query.exclude + [hit.rid]
+					hit = space.intersect_ray(query)
+				probes += 1
+				if hit.is_empty() or absf((hit.position as Vector3).y - terrain.height_at(p.x, p.y)) > 3.0:  # 遠くは粗いので、少しのずれは許す
+					floating += 1
+					if misses.size() < 4:
+						misses.append("(%.0f, %.0f) hit %s ground %.1f" % [p.x, p.y,
+							"none" if hit.is_empty() else "%.1f %s" % [(hit.position as Vector3).y, (hit.collider as Node).name],
+							terrain.height_at(p.x, p.y)])
+				previous = (hit.position as Vector3).y if not hit.is_empty() else previous
+			lowest_edge = minf(lowest_edge, previous)
+	_check("the ground is one connected land (no floating islands)", floating == 0 and lowest_edge < 40.0,
+		"%d of %d probes without ground, far side at %.1f m %s" % [floating, probes, lowest_edge, misses])
+	# 平地：スタート地点から山の裾まで、歩いて進める平らな道
+	var flat := 0
+	var steep: Array[String] = []
+	for k in 11:
+		var p := MountainChain.plain_starts[0].lerp(MountainChain.plain_ends[0], k / 10.0)
+		var normal_y := terrain.normal_at(p.x, p.y).y
+		if normal_y > 0.8:  # 凸凹はあっても、滑り落ちずに歩ける
+			flat += 1
+		else:
+			steep.append("%d:%.2f" % [k, normal_y])
+	_check("a walkable plain before the first mountain", flat >= 6, "%d of 11 points walkable %s" % [flat, steep])  # 凸凹は激しいが、半分以上は歩ける
+	# 夜になっても、最初の山では“何か”は来ない
+	_main.day.time = DayCycle.DAY_LENGTH + DayCycle.SUNSET_LENGTH + 0.5
+	await _wait(0.3)
+	_check("no stalker before the final stage", _main.day.is_night and not _main.stalker.hunting)
+	_main.day.time = 0.0
+	# 霧の奥へ入りこもうとしても、押し戻される
+	var inside := MountainChain.plain_starts[1] + MountainChain.gate_direction(1) * 12.0
+	player.spawn_at(Vector3(inside.x, terrain.height_at(inside.x, inside.y) + 0.5, inside.y), 0.0)
+	await _wait(1.5)
+	var depth := MountainChain.past_gate(1, player.global_position.x, player.global_position.z)
+	_check("the fog pushes you back", depth < 9.0, "%.1f m into the fog" % depth)
+	# 島の海：砂浜のうしろの海へは、泳いでは戻れない（押し戻される）
+	var shore_start := MountainChain.plain_starts[0]
+	var to_sea := -(MountainChain.plain_ends[0] - shore_start).normalized()
+	var wade := shore_start + to_sea * 75.0
+	player.spawn_at(Vector3(wade.x, maxf(terrain.height_at(wade.x, wade.y), Terrain.SEA_LEVEL - 0.6) + 0.3, wade.y), 0.0)
+	await _wait(0.3)
+	player.face_point(player.get_camera().global_position + Vector3(to_sea.x, 0.0, to_sea.y))
+	Input.action_press("move_forward")
+	await _wait(4.0)
+	Input.action_release("move_forward")
+	var sea_depth := terrain.sea_depth(player.global_position.x, player.global_position.z)
+	_check("the sea pushes you back to the beach", sea_depth < 2.6, "%.1f m deep" % sea_depth)
+	# 見えない壁：山頂のたき火をともすまで、次の平地へは歩いて進めない
+	var gate := MountainChain.gate_point(1)
+	var ahead := MountainChain.gate_direction(1)
+	var before_gate := gate - ahead * 6.0
+	player.spawn_at(Vector3(before_gate.x, terrain.height_at(before_gate.x, before_gate.y) + 0.5, before_gate.y), 0.0)
+	await _wait(0.3)
+	player.face_point(player.get_camera().global_position + Vector3(ahead.x, 0.0, ahead.y))
+	Input.action_press("move_forward")
+	Input.action_press("jump")
+	await _wait(3.0)
+	Input.action_release("jump")
+	Input.action_release("move_forward")
+	depth = MountainChain.past_gate(1, player.global_position.x, player.global_position.z)
+	_check("an invisible wall blocks the next plain until the summit fire is lit", depth < FogBanks.PASS_MARGIN + 0.5, "%.1f m past the gate" % depth)
+	var campfire := _main.features.campfires[1]
+	var next := MountainChain.centers[1]
+	if _shot_dir != "":
+		player.spawn_at(campfire.global_position + Vector3(0.0, 0.5, 2.0), 0.0)
+		await _wait(0.2)
+		player.face_point(Vector3(next.x, campfire.global_position.y - 10.0, next.y))
+		await _wait(1.0)
+		await _save_shot("fog_wall.png")
+		player.spawn_at(terrain.spawn_point(), terrain.spawn_yaw())
+		await _wait(0.2)
+		player.face_point(player.get_camera().global_position + Vector3(0.0, 0.25, -1.0))
+		await _wait(1.0)
+		await _save_shot("fog_from_start.png")
+	# 山頂のたき火に着くと、次のステージを作り、その先の霧が晴れていく
+	player.spawn_at(campfire.global_position + Vector3(0.0, 0.5, 2.0), 0.0)
+	player.face_point(Vector3(next.x, campfire.global_position.y - 10.0, next.y))
+	await _wait(1.5)
+	_check("reaching the summit clears the fog ahead", fog.is_opened(1) and MountainChain.unlocked == 2 and fog.clear_amount(1) < 1.0)
+	_check("the next stage is built when the summit fire is lit", terrain.has_stage(1) and _main.features.has_stage(1) and not terrain.has_stage(2) and terrain.has_stage(0))
+	if _shot_dir != "":
+		await _wait(3.0)
+		await _save_shot("fog_clearing.png")
+	for i in 120:
+		await _wait(0.1)
+		if fog.clear_amount(1) >= 1.0:
+			break
+	_check("the fog has cleared", fog.clear_amount(1) >= 1.0 and not fog.is_opened(2))
+	# 見えない壁は消えている（見えない壁だけに当たる線を、境目の向こうまで引いてみる）
+	await _wait(0.2)
+	var from := Vector3(before_gate.x, terrain.height_at(before_gate.x, before_gate.y) + 1.0, before_gate.y)
+	var query := PhysicsRayQueryParameters3D.create(from, from + Vector3(ahead.x, 0.0, ahead.y) * 12.0, Player.BARRIER_LAYER)
+	var barrier := player.get_world_3d().direct_space_state.intersect_ray(query)
+	_check("after lighting the summit fire, the way to the next plain is open", barrier.is_empty() and not fog.at_wall(from + Vector3(ahead.x, 0.0, ahead.y) * 6.0))
+	var shown := _main.features.get_children().filter(func(n: Node) -> bool: return n is CragSpider and (n as Node3D).visible)
+	_check("things of the new stage appear", not shown.is_empty())
+	if _shot_dir != "":
+		await _save_shot("fog_cleared.png")
+	# 次の山頂のたき火をともすと、その次のステージを作り、来た道（最初のステージ）は霧に閉ざされて消える
+	var second := _main.features.campfires[2]
+	player.spawn_at(second.global_position + Vector3(0.0, 0.5, 2.0), 0.0)
+	await _wait(1.5)
+	_check("the stage before last is sealed and unloaded", terrain.has_stage(2) and _main.features.has_stage(2) and not terrain.has_stage(0) and not _main.features.has_stage(0)
+		and not _main.features.campfires[0].visible and second.visible and _main.checkpoint == 2)
+	var sealed_from := Vector3(gate.x, 0.0, gate.y) + Vector3(ahead.x, 0.0, ahead.y) * 8.0
+	sealed_from.y = terrain.height_at(sealed_from.x, sealed_from.z) + 1.0
+	query = PhysicsRayQueryParameters3D.create(sealed_from, sealed_from - Vector3(ahead.x, 0.0, ahead.y) * 14.0, Player.BARRIER_LAYER)
+	barrier = player.get_world_3d().direct_space_state.intersect_ray(query)
+	var near_wall := Vector3(gate.x, 0.0, gate.y) + Vector3(ahead.x, 0.0, ahead.y) * 3.0
+	_check("an invisible wall blocks the way back", not barrier.is_empty() and fog.at_seal(near_wall))
+	var back_there := gate - ahead * 60.0
+	_check("the way back is lost in fog", fog.behind_wall(Vector3(back_there.x, 0.0, back_there.y)) and fog.depth_into(Vector3(back_there.x, 0.0, back_there.y)) > 0.0)
+	if _shot_dir != "":
+		var watch_from := sealed_from + Vector3(ahead.x, 0.0, ahead.y) * 20.0
+		watch_from.y = terrain.height_at(watch_from.x, watch_from.z) + 0.5
+		player.spawn_at(watch_from, 0.0)
+		await _wait(0.2)
+		player.face_point(Vector3(back_there.x, sealed_from.y + 5.0, back_there.y))
+		await _wait(1.0)
+		await _save_shot("fog_sealed_behind.png")
+
+
 ## 山は奥ほど高く、山と山の間には、ひとつ前の山頂より低い谷がある。
 ## 平らな場所はほとんどなく、崖だらけ。種を変えると、ちがう形の山になる
 func _test_chain_shape() -> void:
 	_section("mountain chain")
+	_main.unlock_all_stages()
 	var terrain := _main.terrain
 	var rng := RandomNumberGenerator.new()
 	rng.seed = 9
@@ -177,10 +787,9 @@ func _test_chain_shape() -> void:
 	_check("mostly cliffs", walls > samples * 0.4, "%d%% cliffs" % (walls * 100 / samples))
 	_check("hardly any flat ground", flats < samples * 0.12, "%d%% flat" % (flats * 100 / samples))
 	var peaks_here := MountainChain.peaks.duplicate()
-	MountainChain.generate(TEST_SEED + 1)
-	var different := MountainChain.peaks != peaks_here
-	MountainChain.generate(terrain.run_seed)  # 元の山に戻す
-	_check("another seed makes another mountain", different)
+	var centers_here := MountainChain.centers.duplicate()
+	MountainChain.generate(Main.WORLD_SEED)
+	_check("the mountains are the same every time", MountainChain.peaks == peaks_here and MountainChain.centers == centers_here)
 	var tops: Array[float] = []
 	for i in MountainChain.COUNT:
 		tops.append(terrain.checkpoint(i).y)
@@ -253,6 +862,7 @@ func _test_dawn() -> void:
 	_section("dawn")
 	await _restart()
 	var day := _main.day
+	_main.checkpoint = MountainChain.COUNT - 1  # “何か”が出る最後のステージ
 	if _shot_dir != "":
 		# 夕暮れと夜の景色（空・星・ヘッドライトの光の筋）
 		var campfire := _main.features.campfires[1]
@@ -299,12 +909,37 @@ func _test_items() -> void:
 		"stamina %.1f, hunger %.1f" % [player.stamina, player.hunger])
 	player.use_item(Items.Kind.PITON)
 	_check("piton cannot be used on the ground", inventory.count_of(Items.Kind.PITON) == 1)
-	var pickups := _main.features.get_children().filter(func(n: Node) -> bool: return n is Pickup)
-	_check("pickups placed on the mountains", pickups.size() >= 20, "%d pickups" % pickups.size())
+	var pickups := _main.features.get_children().filter(func(n: Node) -> bool: return n is ItemBox)
+	_check("item boxes placed on the mountains", pickups.size() >= 20, "%d boxes" % pickups.size())
 	var kinds := {}
-	for pickup: Pickup in pickups:
-		kinds[pickup.kind] = true
+	for box: ItemBox in pickups:
+		for kind in box.contents:
+			kinds[kind] = true
 	_check("many kinds of items are found", kinds.size() >= 10, "%d kinds" % kinds.size())
+	# 箱を開けると、中のアイテムが飛び出す
+	var box: ItemBox = pickups[0]
+	var inside := box.contents.size()
+	var inside_kinds := box.contents.duplicate()
+	var before_open := _pickups().size()
+	player.global_position = box.global_position + box.global_transform.basis.z * 1.6 + Vector3.UP * 0.4  # 持ち物はそのまま
+	player.velocity = Vector3.ZERO
+	player.face_point(box.global_position + Vector3.UP * 0.3)
+	await _wait(0.2)
+	_check("looking at a box shows a hint", player.aim_hint() == "E：箱を開ける", player.aim_hint())
+	_tap("interact")
+	await _wait(0.5)
+	var shown := _pickups().filter(func(p: Pickup) -> bool: return p.freeze and p.global_position.distance_to(box.global_position) < 0.8)
+	_check("opening a box shows the items inside", box.opened and _pickups().size() == before_open + inside and shown.size() == inside,
+		"%d inside" % inside)
+	await _wait(0.5)
+	_check("the items stay in the box", shown.all(func(p: Pickup) -> bool: return p.global_position.distance_to(box.global_position) < 0.8))
+	if not shown.is_empty():
+		player.face_point((shown[0] as Pickup).global_position)
+	await _wait(0.2)
+	_tap("interact")
+	await _wait(0.2)
+	_check("an item in the box can be taken", player.inventory.count_of(inside_kinds[0]) >= 1)
+	player.inventory.remove(inside_kinds[0])  # あとの持ち物のテストのために戻す
 	# 持ち物の欄：同じ種類は 3 つまで重なり、6 つの欄がいっぱいになると拾えない
 	for kind in [Items.Kind.CHOCOLATE, Items.Kind.CHOCOLATE, Items.Kind.CHOCOLATE, Items.Kind.CHOCOLATE]:
 		player.pick_up(kind)
@@ -313,9 +948,10 @@ func _test_items() -> void:
 		player.pick_up(kind)
 	_check("a full inventory refuses more", not player.pick_up(Items.Kind.CANNED))
 	# いろいろなアイテムの効き目
+	inventory.clear()
+	for k in 4:
+		player.pick_up(Items.Kind.CHOCOLATE)
 	player.cold = 30.0
-	player.pick_up(Items.Kind.HAND_WARMER)
-	inventory.remove(Items.Kind.CHALK)
 	player.pick_up(Items.Kind.HAND_WARMER)
 	player.use_item(Items.Kind.HAND_WARMER)
 	_check("hand warmer warms you", player.cold == 0.0 and player.has_effect("warmer"))
@@ -346,9 +982,9 @@ func _test_items() -> void:
 			player.pick_up(kind)
 		await _wait(0.3)
 		await _save_shot("hotbar.png")
-	if _shot_dir != "" and not pickups.is_empty():
-		var pickup: Node3D = pickups[0]
-		await _shot_from(pickup.global_position + Vector3(1.6, 1.2, 1.6), pickup.global_position + Vector3.UP * 0.3, "pickup.png")
+	if _shot_dir != "" and pickups.size() > 1:
+		var closed: Node3D = pickups[1]
+		await _shot_from(closed.global_position + Vector3(1.4, 1.0, 1.4), closed.global_position + Vector3.UP * 0.2, "pickup.png")
 
 
 ## 投げたアイテムは物理で飛んで転がり、見ながら E で拾える。火をつけた発煙筒・爆竹・塩は効き目を出す。
@@ -374,11 +1010,22 @@ func _test_physics_items() -> void:
 	await _wait(2.0)
 	_check("the thrown item flies and falls", item.global_position.distance_to(start) > 2.0 and item.global_position.y < start.y,
 		"moved %.1f m" % item.global_position.distance_to(start))
-	player.global_position = item.global_position + Vector3(0.0, 0.3, 1.5)
-	await _wait(0.2)
+	# アイテムのそばの、いちばん平らな所に立って見る（斜面だと滑って離れてしまう）
+	var terrain := _main.terrain
+	var stand := Vector3.INF
+	var flattest := -1.0
+	for k in 8:
+		var around := item.global_position + Vector3(cos(k * TAU / 8.0), 0.0, sin(k * TAU / 8.0)) * 1.2
+		var normal_y := terrain.normal_at(around.x, around.z).y
+		if normal_y > flattest and not terrain.near_rock(around, 0.3):
+			flattest = normal_y
+			stand = Vector3(around.x, terrain.height_at(around.x, around.z) + 0.05, around.z)
+	player.global_position = stand
+	player.velocity = Vector3.ZERO
+	await _wait(0.1)
 	player.face_point(item.global_position)
 	await _wait(0.1)
-	_check("looking at an item shows a pick-up hint", player.aim_hint().begins_with("E："), player.aim_hint())
+	_check("looking at an item shows a pick-up hint", player.aim_hint().begins_with("E："), "%s (aimed %s, frozen %s, %.2f m from the item)" % [player.aim_hint(), player.aimed, player.frozen, player.get_camera().global_position.distance_to(item.global_position)])
 	_tap("interact")
 	await _wait(0.2)
 	_check("E picks it up again", inventory.count_of(Items.Kind.CHOCOLATE) == 1 and not is_instance_valid(item))
@@ -454,10 +1101,15 @@ func _test_sliding() -> void:
 		var distance := MountainChain.radii[0] * rng.randf_range(0.2, 0.9)
 		var x := c.x + cos(angle) * distance
 		var z := c.y + sin(angle) * distance
-		var n := terrain.normal_at(x, z)
-		var below := Vector3(n.x, 0.0, n.z).normalized() * 1.0
-		var n2 := terrain.normal_at(x + below.x, z + below.z)
-		if n.y > 0.74 and n.y < 0.85 and n2.y > 0.7 and n2.y < 0.9:
+		# 足もとのまわり（小さなでこぼこも含めて）が、どこも滑るほど急な所
+		var steep_all := true
+		for k in 9:
+			var offset := Vector2.ZERO if k == 0 else Vector2(cos(k * TAU / 8.0), sin(k * TAU / 8.0)) * 0.6
+			var n := terrain.normal_at(x + offset.x, z + offset.y)
+			if n.y < 0.6 or n.y > 0.76:
+				steep_all = false
+				break
+		if steep_all and not terrain.near_rock(Vector3(x, terrain.height_at(x, z), z), 2.0):
 			spot = Vector3(x, terrain.height_at(x, z), z)
 			break
 	if not spot.is_finite():
@@ -590,8 +1242,9 @@ func _test_gimmicks() -> void:
 	# 氷の壁：すべる
 	var ice: IceWall = _first(IceWall)
 	if ice:
-		var normal := ice.global_transform.basis.z
-		player.spawn_at(ice.global_position + normal * (Player.WALL_GAP + 0.65) - Vector3.UP * 1.0, 0.0)
+		var normal := ice.global_transform.basis.z.normalized()
+		var thick := ice.global_transform.basis.get_scale().z
+		player.spawn_at(ice.global_position + normal * (Player.WALL_GAP + 0.9 * thick) - Vector3.UP * 1.0, 0.0)
 		player.call("_start_climb", normal)
 		Input.action_press("grab")
 		await _wait(0.3)
@@ -697,6 +1350,9 @@ func _test_new_enemies() -> void:
 	# 手長：真下を通るとつかまれ、もがけば放される
 	var tenaga: Tenaga = _first(Tenaga)
 	if tenaga:
+		_check("tenaga is not out in the daytime", not tenaga.get("_model").visible and not tenaga.is_physics_processing())
+		tenaga.set_awake(true)
+		await _wait(1.5)  # 垂らした腕の形が落ち着くまで
 		var hands := tenaga.hands_position()
 		var ground := Vector3(hands.x, terrain.height_at(hands.x, hands.z), hands.z)
 		if _shot_dir != "":
@@ -723,9 +1379,16 @@ func _test_new_enemies() -> void:
 		await _wait(0.3)
 		await _save_shot("kodama.png")
 	var kodama := enemies.kodamas[0]
+	kodama.steal_chance = 1.0  # テストでは必ず盗ませる
+	var carried := func() -> int:
+		var total := 0
+		for count in player.inventory.counts:
+			total += count
+		return total
+	var carried_before: int = carried.call()
 	kodama.global_position = player.global_position + Vector3(0.8, 0.0, 0.0)
 	await _wait(0.2)
-	_check("kodama steal an item", kodama.state == "fleeing" and kodama.carrying >= 0 and player.inventory.count_of(Items.Kind.PITON) + player.inventory.count_of(Items.Kind.ONIGIRI) == 1)
+	_check("kodama steal an item", kodama.state == "fleeing" and kodama.carrying >= 0 and carried.call() == carried_before - 1)
 	var before := _pickups().size()
 	kodama.vanish()
 	_check("the stolen item is dropped when kodama vanish", _pickups().size() == before + 1)
@@ -782,6 +1445,7 @@ func _test_new_enemies() -> void:
 	await _wait(0.5)
 	if _shot_dir != "":
 		await _shot_from(player.global_position + Vector3(0.0, 2.0, 0.0), bird.global_position, "kaichou.png", true)
+	bird.aim_error = 0.0  # テストでは狙いをはずさない
 	bird.dive()
 	var struck := false
 	for i in 40:
@@ -857,6 +1521,7 @@ func _test_piton() -> void:
 	_check("piton clips onto the wall", player.clipped and player.inventory.count_of(Items.Kind.PITON) == 0)
 	Input.action_release("grab")
 	var y := player.global_position.y
+	player.stamina = player.max_stamina() * 0.5  # 疲れた状態で、ぶら下がって休む
 	var stamina := player.stamina
 	await _wait(1.5)
 	_check("hanging on the piton without holding", player.state == Player.State.CLIMB and absf(player.global_position.y - y) < 0.2,
@@ -870,7 +1535,9 @@ func _test_ward() -> void:
 	_section("ward")
 	await _restart()
 	var player := _main.player
-	player.global_position += Vector3(0.0, 0.0, -8.0)  # スタート地点のたき火から離れる
+	# スタート地点のたき火の守り（広い）から離れた、平地の中ほどで試す
+	var field := MountainChain.plain_starts[0].lerp(MountainChain.plain_ends[0], 0.4)
+	player.spawn_at(Vector3(field.x, _main.terrain.height_at(field.x, field.y) + 0.5, field.y), 0.0)
 	await _wait(0.5)
 	player.pick_up(Items.Kind.OFUDA)
 	player.use_item(Items.Kind.OFUDA)
@@ -897,6 +1564,19 @@ func _test_spider() -> void:
 	if spiders.is_empty():
 		return
 	var spider: CragSpider = spiders[0]
+	await _wait(0.5)  # 昼か夜かが、化け物たちに伝わるのを待つ
+	_check("spiders hide in the daytime", not spider.get("_model").visible and not spider.is_physics_processing())
+	# 壁に取りつける岩グモを選ぶ（大岩が壁をおおっている所もある）
+	var space := _main.player.get_world_3d().direct_space_state
+	for candidate: CragSpider in spiders:
+		_main.terrain.ensure_collision(candidate.global_position, 30.0)
+		await _wait(0.05)
+		var n: Vector3 = candidate.get("_normal")
+		var from := candidate.global_position + n * 0.45 - Vector3.UP * 1.2 + Vector3.UP
+		if not space.intersect_ray(PhysicsRayQueryParameters3D.create(from, from - n * 1.2, Player.TERRAIN_LAYER)).is_empty():
+			spider = candidate
+			break
+	spider.set_awake(true)
 	var normal: Vector3 = spider.get("_normal")
 	if _shot_dir != "":
 		await _shot_from(spider.global_position + normal * 2.2 + Vector3.UP * 0.6, spider.global_position, "spider.png", true)
@@ -936,7 +1616,12 @@ func _test_peeker() -> void:
 	for i in 20:
 		player.face_point(peeker.head_position())
 		await _wait(0.1)
-	_check("headlamp stare repels the peeker", bool(peeker.get("_retreating")) or not peeker.active)
+	if bool(peeker.get("_retreating")) or not peeker.active:
+		_check("headlamp stare repels the peeker", true)
+	elif not peeker.call("_line_of_sight", player.get_camera().global_position, peeker.head_position()):
+		_note("skip headlamp check: a rock is between you and the peeker")
+	else:
+		_check("headlamp stare repels the peeker", false)
 	Input.action_release("grab")
 
 
@@ -946,9 +1631,18 @@ func _test_pale_one() -> void:
 	_calm_weather()
 	_calm_enemies()
 	var player := _main.player
-	# 雪山の頂上の平らな場所に立つ（たき火から 5 m 離れているので、火はつかず、温まらない）
-	player.spawn_at(_main.terrain.checkpoint(Biomes.Id.SNOW) + Vector3(5.0, 0.5, 0.0), 0.0)
+	# 雪山の、たき火（休み場）から離れた平らな所に立つ
+	var fires := PackedVector3Array()
+	for campfire in _main.features.campfires:
+		fires.append(campfire.global_position)
+	var snow_rng := RandomNumberGenerator.new()
+	snow_rng.seed = 3
+	var snow_spots := _main.terrain.random_ledge_points(snow_rng, 1, Biomes.Id.SNOW, 1.0, 1, fires, Campfire.REST_RADIUS + 15.0, 20.0, 0.85)
+	player.spawn_at((snow_spots[0] if not snow_spots.is_empty() else _main.terrain.checkpoint(Biomes.Id.SNOW)) + Vector3(0.0, 0.5, 0.0), 0.0)
 	var pale := _main.enemies.pale_one
+	await _wait(1.0)
+	_check("no pale one in the daytime", not pale.active)
+	_main.day.time = DayCycle.DAY_LENGTH + DayCycle.SUNSET_LENGTH * 0.8  # 日が暮れてきた
 	for i in 30:
 		await _wait(0.1)
 		if pale.active:
@@ -986,6 +1680,246 @@ func _test_pale_one() -> void:
 		if player.cold > cold + 10.0:
 			break
 	_check("pale one chills the player", player.cold > cold + 10.0, "cold %.1f -> %.1f" % [cold, player.cold])
+
+
+## エモート（動くとやめる）と、崖の下の仲間に手を差し伸べて引き上げる
+func _test_social() -> void:
+	_section("emotes and pulling up")
+	await _restart()
+	_calm_weather()
+	_calm_enemies()
+	var player := _main.player
+	var terrain := _main.terrain
+	player.spawn_at(terrain.spawn_point(), terrain.spawn_yaw())
+	await _wait(0.5)
+	player.play_emote("dance")
+	await _wait(0.6)
+	_check("dancing", player.emote == "dance")
+	if _shot_dir != "":
+		var front := -player.global_transform.basis.z
+		await _shot_from(player.global_position + front * 3.0 + Vector3.UP * 1.3, player.global_position + Vector3.UP * 0.9, "emote_dance.png", true)
+	Input.action_press("move_forward")
+	await _wait(0.3)
+	Input.action_release("move_forward")
+	_check("moving stops the emote", player.emote == "")
+	player.play_emote("sit")
+	await _wait(0.8)
+	_check("sitting lowers the eyes", player.get_camera().global_position.y < player.global_position.y + 1.2)
+	player.emote = ""
+	# 崖のふちを探して、外を向いて立つ
+	var edge := _find_edge(MountainChain.centers[0])
+	if not edge.is_empty():
+		player.spawn_at(edge[0], 0.0)
+		player.face_point(player.get_camera().global_position + edge[1])
+		await _wait(0.4)
+		var buddy := _main.spawn_buddy()
+		await _wait(0.4)
+		_check("a buddy hangs below the edge", buddy.state == Player.State.CLIMB, Player.State.keys()[buddy.state])
+		if _shot_dir != "":
+			await _shot_from(player.global_position + edge[1] * 4.0 + Vector3.UP * 0.5, buddy.global_position + Vector3.UP * 1.0, "buddy_hanging.png", true)
+		Input.action_press("reach")
+		for i in 20:
+			await _wait(0.1)
+			if buddy.is_being_pulled():
+				break
+		if _shot_dir != "":
+			await _shot_from(player.global_position + edge[1].cross(Vector3.UP) * 3.5 + Vector3.UP * 1.2, player.global_position, "pull_up.png", true)
+		await _wait(1.2)
+		Input.action_release("reach")
+		_check("reaching out pulls the buddy up", buddy.state == Player.State.WALK and buddy.global_position.y > player.global_position.y - 1.0,
+			"buddy %.1f m below, %s" % [player.global_position.y - buddy.global_position.y, Player.State.keys()[buddy.state]])
+		buddy.queue_free()
+		_main.buddy = null
+	else:
+		_note("skip pull-up test: no cliff edge found")
+
+
+## 山 center のまわりで、足元から先がすとんと落ちている崖のふちを探す。[立つ場所, 外向き] を返す
+func _find_edge(center: Vector2) -> Array:
+	var terrain := _main.terrain
+	for step in 48:
+		var angle := step * TAU / 48.0
+		var out := Vector2(cos(angle), sin(angle))
+		for r in range(8, 50):
+			var p := center + out * float(r)
+			var here := terrain.height_at(p.x, p.y)
+			var ahead := center + out * (r + 2.5)
+			var behind := center + out * (r - 1.0)
+			if terrain.near_landing(p.x, p.y, 3.0) or terrain.near_rock(Vector3(p.x, here, p.y), 1.5):
+				continue  # 岩棚のなだらかな縁や、岩のそばはさける（くっきりした崖の縁を探す）
+			if terrain.normal_at(p.x, p.y).y > 0.85 and absf(terrain.height_at(behind.x, behind.y) - here) < 0.6 \
+					and here - terrain.height_at(ahead.x, ahead.y) > 4.0:
+				return [Vector3(p.x, here + 0.4, p.y), Vector3(out.x, 0.0, out.y)]
+	return []
+
+
+## ナタで獣を狩り、はぎとる。イノシシは突進してくる。木いちごを摘み、手に持って左クリックで食べる
+func _test_hunting() -> void:
+	_section("hunting")
+	await _restart()
+	_calm_weather()
+	_calm_enemies()
+	var player := _main.player
+	var terrain := _main.terrain
+	var director := _main.critters
+	director.clear()
+	var here := terrain.spawn_point()
+	player.spawn_at(here, 0.0)
+	await _wait(0.3)
+	# シカ：目の前に置いて、ナタで二度叩く
+	var ahead := here + Vector3(0.0, 0.0, -1.8)
+	ahead.y = terrain.height_at(ahead.x, ahead.z)
+	var deer := Critter.new()
+	director.add_child(deer)
+	deer.setup("deer", ahead, player, terrain)
+	player.inventory.selected = player.inventory.slot_of(Items.Kind.NATA)
+	player.stowed = false
+	for swing in 2:
+		player.face_point(deer.global_position + Vector3.UP * 0.6)
+		await _wait(0.1)
+		deer.global_position = ahead
+		deer.state = "idle"
+		_tap("use_item")
+		await _wait(0.7)
+	_check("the machete kills a deer", deer.dead, "health %.0f" % deer.health)
+	# 逃げる獣は、目の前では消えない（崖や岩にはばまれても）
+	var hare := Critter.new()
+	director.add_child(hare)
+	var hare_at := here + Vector3(1.5, 0.0, 2.5)
+	hare_at.y = terrain.height_at(hare_at.x, hare_at.z)
+	hare.setup("rabbit", hare_at, player, terrain)
+	hare.call("_start_flee")
+	await _wait(3.5)
+	_check("a fleeing animal does not vanish while you are close", not hare.gone or hare.global_position.distance_to(player.global_position) > 12.0,
+		"%.1f m away" % hare.global_position.distance_to(player.global_position))
+	hare.queue_free()
+	var meat_before := player.inventory.count_of(Items.Kind.RAW_MEAT)
+	deer.interact(player)
+	_check("skinning gives meat and a pelt", player.inventory.count_of(Items.Kind.RAW_MEAT) > meat_before and player.inventory.count_of(Items.Kind.PELT) >= 1,
+		"%s" % [player.inventory.kinds])
+	# イノシシ：近づくと突進してきて、ケガをする（スタート地点のたき火の守りの外の、岩のない平らな所で）
+	var inland := MountainChain.plain_starts[0].lerp(MountainChain.plain_ends[0], 0.4)
+	var across := (MountainChain.plain_ends[0] - MountainChain.plain_starts[0]).normalized().orthogonal()
+	for k in 40:
+		var along := MountainChain.plain_starts[0].lerp(MountainChain.plain_ends[0], 0.3 + (k % 5) * 0.1) + across * (k / 5 - 4) * 8.0
+		var spot := Vector3(along.x, terrain.height_at(along.x, along.y), along.y)
+		if not terrain.near_rock(spot, 9.0) and terrain.normal_at(along.x, along.y).y > 0.9 and terrain.normal_at(along.x + 6.0, along.y).y > 0.85:
+			inland = along
+			break
+	var field := Vector3(inland.x, terrain.height_at(inland.x, inland.y) + 0.5, inland.y)
+	player.spawn_at(field, 0.0)
+	await _wait(0.3)
+	player.injury = 0.0
+	var boar := Critter.new()
+	director.add_child(boar)
+	var boar_at := field + Vector3(6.0, 0.0, 0.0)
+	boar_at.y = terrain.height_at(boar_at.x, boar_at.z)
+	boar.setup("boar", boar_at, player, terrain)
+	var struck := false
+	var seen := []
+	for i in 50:
+		await _wait(0.1)
+		if seen.is_empty() or seen[-1] != boar.state:
+			seen.append(boar.state)
+		if player.injury > 0.0:
+			struck = true
+			break
+	_check("a boar charges into you", struck, "states %s" % [seen])
+	player.spawn_at(here, 0.0)
+	await _wait(0.3)
+	# 木いちご：摘んで、手に持って左クリックで食べる
+	var bushes := _main.features.get_children().filter(func(n: Node) -> bool: return n is Harvestable)
+	_check("fruit to harvest grows in the forest", bushes.size() >= 30, "%d plants" % bushes.size())
+	var berries: Harvestable = null
+	for plant: Harvestable in bushes:
+		if plant.kind == Items.Kind.BERRIES:
+			berries = plant
+			break
+	if berries:
+		player.inventory.clear()
+		berries.interact(player)
+		_check("picking berries gives berries", player.inventory.count_of(Items.Kind.BERRIES) >= 2 and not berries.is_ripe())
+		player.inventory.selected = player.inventory.slot_of(Items.Kind.BERRIES)
+		player.stowed = false
+		var count := player.inventory.count_of(Items.Kind.BERRIES)
+		player.hunger = 30.0
+		_tap("use_item")
+		await _wait(0.2)
+		_check("left click eats the berries in hand", player.inventory.count_of(Items.Kind.BERRIES) == count - 1 and player.hunger < 30.0)
+	boar.queue_free()
+
+
+## 地帯ごとの動物が現れ、近づくと顔を上げて逃げる。霊峰の白ぎつねは道を案内する
+func _test_critters() -> void:
+	_section("critters")
+	await _restart()
+	_calm_weather()
+	_calm_enemies()
+	var player := _main.player
+	var terrain := _main.terrain
+	var director := _main.critters
+	var seen := {}
+	for biome in Biomes.NAMES.size():
+		director.clear()
+		var middle := MountainChain.plain_starts[biome].lerp(MountainChain.plain_ends[biome], 0.5)
+		player.spawn_at(Vector3(middle.x, terrain.height_at(middle.x, middle.y) + 0.5, middle.y), 0.0)
+		await _wait(0.2)
+		for attempt in 6:
+			director.spawn_group(biome)
+		for critter in director.critters():
+			seen[critter.species] = true
+		if _shot_dir != "" and not director.critters().is_empty():
+			var first: Critter = director.critters()[0]
+			await _wait(1.0)
+			await _shot_from(first.global_position + Vector3(4.0, 2.0, 4.0), first.global_position + Vector3.UP * 0.5, "critters_%d.png" % biome, true)
+	_note("animals: %s" % str(seen.keys()))
+	_check("animals live in every biome", seen.size() >= 6, "%d kinds" % seen.size())
+	# 近づくと逃げる
+	director.clear()
+	var middle := MountainChain.plain_starts[0].lerp(MountainChain.plain_ends[0], 0.5)
+	player.spawn_at(Vector3(middle.x, terrain.height_at(middle.x, middle.y) + 0.5, middle.y), 0.0)
+	await _wait(0.2)
+	var walker: Critter = null
+	for attempt in 10:
+		director.spawn_group(Biomes.Id.FOREST)
+		for critter in director.critters():
+			if Critter.SPECIES[critter.species].kind in ["walker", "hopper"]:
+				walker = critter
+				break
+		if walker:
+			break
+	if walker:
+		var start := walker.global_position
+		player.global_position = walker.global_position + Vector3(2.5, 0.5, 0.0)
+		await _wait(1.5)
+		_check("animals run away when you come close", walker.state == "flee" or walker.gone or walker.global_position.distance_to(start) > 2.0,
+			"%s is %s" % [walker.species, walker.state])
+	# 白ぎつねの道案内
+	director.clear()
+	var summit_plain := MountainChain.plain_starts[3].lerp(MountainChain.plain_ends[3], 0.3)
+	player.spawn_at(Vector3(summit_plain.x, terrain.height_at(summit_plain.x, summit_plain.y) + 0.5, summit_plain.y), 0.0)
+	await _wait(0.3)
+	var fox: Critter = null
+	for attempt in 20:
+		director.spawn_group(Biomes.Id.SUMMIT)
+		for critter in director.critters():
+			if critter.species == "fox":
+				fox = critter
+		if fox:
+			break
+	if fox:
+		fox.global_position = player.global_position + Vector3(3.0, 0.0, 0.0)
+		fox.global_position.y = terrain.height_at(fox.global_position.x, fox.global_position.z)
+		var goal := director.guide_target
+		var before := Vector2(fox.global_position.x - goal.x, fox.global_position.z - goal.z).length()
+		await _wait(2.0)
+		var after := Vector2(fox.global_position.x - goal.x, fox.global_position.z - goal.z).length()
+		_check("the white fox leads the way", fox.state == "guide" and after < before - 1.0, "%.1f m -> %.1f m" % [before, after])
+		if _shot_dir != "":
+			await _shot_from(fox.global_position + Vector3(2.5, 1.5, 2.5), fox.global_position + Vector3.UP * 0.3, "fox.png", true)
+	else:
+		_check("a white fox appears on the sacred peak", false)
+	director.clear()
 
 
 ## テスト用の飛行モード：F1 で飛び、壁をすり抜け、やめると落下のケガなしで着地する
@@ -1034,6 +1968,23 @@ func _test_menu() -> void:
 	_main.menu.close()
 	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
 	_check("closing the menu resumes", not get_tree().paused)
+	# 音量は項目ごと：音はそれぞれの項目の通り道に流れ、項目の音量がかかる
+	var own := _main.player.find_children("*", "AudioStreamPlayer", true, false)
+	_check("the player's own sounds go to the self volume", not own.is_empty() and own.all(func(s: Node) -> bool: return s.get("bus") == &"Self"))
+	var fire := _main.lobby.get("campfire") as Node
+	var crackle := fire.find_children("*", "AudioStreamPlayer3D", true, false)
+	_check("a campfire goes to the nature volume", not crackle.is_empty() and crackle[0].get("bus") == &"World")
+	_check("echoing monster voices go to the monster volume", AudioServer.get_bus_send(AudioServer.get_bus_index("Echo")) == &"Monsters")
+	var before := Settings.volume_animals
+	Settings.volume_animals = 0.5
+	Settings.apply()
+	_check("each volume sets its own bus", absf(AudioServer.get_bus_volume_db(AudioServer.get_bus_index("Animals")) - linear_to_db(0.5)) < 0.01
+		and absf(AudioServer.get_bus_volume_db(AudioServer.get_bus_index("Monsters")) - linear_to_db(maxf(Settings.volume_monsters, 0.0001))) < 0.01)
+	Settings.volume_animals = 0.0
+	Settings.apply()
+	_check("a volume at zero mutes it", AudioServer.is_bus_mute(AudioServer.get_bus_index("Animals")))
+	Settings.volume_animals = before
+	Settings.apply()
 
 
 # --- 重さの計測（--perf） ---
@@ -1045,10 +1996,10 @@ func _measure_performance() -> void:
 	Engine.max_fps = 0
 	var player := _main.player
 	await _measure("lobby")
-	player.global_position = _main.lobby.get("_bus_door") + Vector3(0.0, 0.3, 0.0)
+	player.global_position = _main.lobby.get("_board_point") + Vector3(0.0, 0.3, 0.0)
 	await _wait_for_climb()
 	var terrain := _main.terrain
-	_note("build: %d nodes in the mountain features" % _main.features.get_child_count())
+	_note("build: %d nodes in the mountain features, %d rocks noted" % [_main.features.get_child_count(), terrain.get("_rock_cells").values().reduce(func(a: int, l: Array) -> int: return a + l.size(), 0)])
 	await _measure("trailhead")
 	if "--breakdown" in OS.get_cmdline_user_args():
 		await _breakdown()
@@ -1060,6 +2011,34 @@ func _measure_performance() -> void:
 		var center: Vector2 = MountainChain.centers[mini(biome + 1, MountainChain.COUNT - 1)]
 		player.face_point(Vector3(center.x, spot.y, center.y))
 		await _measure("summit of %s, looking ahead" % Biomes.NAMES[biome])
+		if biome == 0 and "--breakdown-summit" in OS.get_cmdline_user_args():
+			await _wait(8.0)
+			await _measure("  (settled)")
+			var rock_groups: Array = terrain.get("_rock_groups")
+			for group: Variant in rock_groups:
+				if group != null:
+					(group as Node3D).visible = false
+			await _measure("  - without the big rocks")
+			for group: Variant in rock_groups:
+				if group != null:
+					(group as Node3D).visible = true
+			for child in terrain.get_children():
+				if child is MeshInstance3D:
+					child.visible = false
+			await _measure("  - without the ground")
+			for child in terrain.get_children():
+				if child is MeshInstance3D:
+					child.visible = true
+			_main.fog.suppressed = true
+			await _measure("  - without the fog banks")
+			_main.fog.suppressed = false
+			for child in _main.features.get_children():
+				if child is Node3D and not child is Campfire:
+					child.visible = false
+			await _measure("  - without trees, props, gimmicks")
+			for child in _main.features.get_children():
+				if child is Node3D:
+					child.visible = true
 	# 樹海の真ん中（木と罠と沼が多い）
 	var forest := terrain.random_ledge_points(rng, 1, Biomes.Id.FOREST, 1.0, 1, PackedVector3Array(), 0.0, -1.0, 0.8)
 	if not forest.is_empty():
@@ -1084,6 +2063,52 @@ func _measure_performance() -> void:
 
 ## 何が重いのかを調べる：ひとつずつ消して測り直す
 func _breakdown() -> void:
+	var saved_retro := Settings.retro
+	for level in [0, 3]:
+		Settings.retro = level
+		Settings.apply()
+		await _measure("  - screen roughness %s (3D scale %.2f, window %s)" % [Settings.RETRO_NAMES[level], get_viewport().scaling_3d_scale, get_window().size])
+	Settings.retro = saved_retro
+	Settings.apply()
+	var world := _main.day.find_children("*", "WorldEnvironment", false, false)[0] as WorldEnvironment
+	var environment := world.environment
+	environment.glow_enabled = false
+	await _measure("  - without glow")
+	environment.glow_enabled = true
+	environment.background_mode = Environment.BG_COLOR
+	await _measure("  - without the sky")
+	environment.background_mode = Environment.BG_SKY
+	environment.fog_enabled = false
+	await _measure("  - without distance fog")
+	environment.fog_enabled = true
+	var retro := _main.get_children().filter(func(n: Node) -> bool: return n is RetroFilter)
+	if not retro.is_empty():
+		(retro[0] as CanvasLayer).visible = false
+		await _measure("  - without the retro filter")
+		(retro[0] as CanvasLayer).visible = true
+	var camera := _main.player.get_camera()
+	camera.cull_mask &= ~PlayerHands.HANDS_LAYER
+	await _measure("  - without hands and held item")
+	camera.cull_mask |= PlayerHands.HANDS_LAYER
+	var hud_nodes := _main.get_children().filter(func(n: Node) -> bool: return n is CanvasLayer and not n is RetroFilter)
+	for n: CanvasLayer in hud_nodes:
+		n.visible = false
+	await _measure("  - without HUD layers")
+	for n: CanvasLayer in hud_nodes:
+		n.visible = true
+	_main.terrain.set_physics_process(false)
+	await _measure("  - without collision streaming")
+	_main.terrain.set_physics_process(true)
+	await _wait(15.0)
+	await _measure("  - after streaming settles")
+	_main.fog.suppressed = true
+	await _measure("  - without the fog banks")
+	_main.fog.suppressed = false
+	_main.critters.process_mode = Node.PROCESS_MODE_DISABLED
+	_main.enemies.process_mode = Node.PROCESS_MODE_DISABLED
+	await _measure("  - without animals and monsters")
+	_main.critters.process_mode = Node.PROCESS_MODE_INHERIT
+	_main.enemies.process_mode = Node.PROCESS_MODE_INHERIT
 	var sun: DirectionalLight3D = _main.day.get("_sun")
 	sun.shadow_enabled = false
 	await _measure("  - without sun shadows")
@@ -1098,10 +2123,18 @@ func _breakdown() -> void:
 	for child in _main.features.get_children():
 		if child is MultiMeshInstance3D:
 			child.visible = true
+	var rock_groups: Array = _main.terrain.get("_rock_groups")
+	for group: Variant in rock_groups:
+		if group != null:
+			(group as Node3D).visible = false
+	await _measure("  - without the big rocks")
+	for group: Variant in rock_groups:
+		if group != null:
+			(group as Node3D).visible = true
 	for child in _main.terrain.get_children():
 		if child is MeshInstance3D:
 			child.visible = false
-	await _measure("  - without terrain and rocks")
+	await _measure("  - without the ground")
 	for child in _main.terrain.get_children():
 		if child is MeshInstance3D:
 			child.visible = true
@@ -1120,18 +2153,29 @@ func _measure(label: String) -> void:
 	var draws := 0.0
 	var primitives := 0.0
 	var elapsed := 0.0
+	var cpu := 0.0
+	var physics := 0.0
+	var gpu := 0.0
+	var viewport_rid := get_viewport().get_viewport_rid()
+	RenderingServer.viewport_set_measure_render_time(viewport_rid, true)
 	while elapsed < 3.0:
 		await get_tree().process_frame
 		var dt := get_process_delta_time()
 		elapsed += dt
 		times.append(dt)
+		cpu += Performance.get_monitor(Performance.TIME_PROCESS)
+		physics += Performance.get_monitor(Performance.TIME_PHYSICS_PROCESS)
+		gpu += RenderingServer.viewport_get_measured_render_time_gpu(viewport_rid)
 		draws = maxf(draws, Performance.get_monitor(Performance.RENDER_TOTAL_DRAW_CALLS_IN_FRAME))
 		primitives = maxf(primitives, Performance.get_monitor(Performance.RENDER_TOTAL_PRIMITIVES_IN_FRAME))
 	times.sort()
 	var average := elapsed / times.size()
 	var worst := times[int(times.size() * 0.99)]  # 遅いほうから 1% のフレーム
-	_note("%-32s avg %5.0f fps   1%% low %5.0f fps   draw calls %5d   triangles %7d   video mem %d MB" % [label, 1.0 / average,
-		1.0 / worst, draws, primitives, Performance.get_monitor(Performance.RENDER_VIDEO_MEM_USED) / 1048576.0])
+	_note("%-32s avg %5.0f fps   1%% low %5.0f fps   draw calls %5d   triangles %7d   video mem %d MB   process %.1f ms  physics %.1f ms  gpu %.1f ms" % [label, 1.0 / average,
+		1.0 / worst, draws, primitives, Performance.get_monitor(Performance.RENDER_VIDEO_MEM_USED) / 1048576.0,
+		cpu / times.size() * 1000.0, physics / times.size() * 1000.0, gpu / times.size()])
+	_note("      physics: active %d, pairs %d, islands %d" % [Performance.get_monitor(Performance.PHYSICS_3D_ACTIVE_OBJECTS),
+		Performance.get_monitor(Performance.PHYSICS_3D_COLLISION_PAIRS), Performance.get_monitor(Performance.PHYSICS_3D_ISLAND_COUNT)])
 
 
 # --- スクリーンショット ---
@@ -1139,8 +2183,144 @@ func _measure(label: String) -> void:
 func _overview_shot() -> void:
 	var world := _main.day.find_children("*", "WorldEnvironment", false, false)[0] as WorldEnvironment
 	world.environment.fog_enabled = false
-	await _shot_from(Vector3(300.0, 230.0, 60.0), Vector3(0.0, 110.0, -125.0), "overview.png")
+	var c := MountainChain.centers[0]
+	var r: float = MountainChain.radii[0]
+	await _shot_from(Vector3(c.x + r * 3.2, MountainChain.peaks[0] * 1.3, c.y + r * 2.0), Vector3(c.x, MountainChain.peaks[0] * 0.4, c.y - r), "overview.png")
 	world.environment.fog_enabled = true
+
+
+## GPU に作る物の数を数える（--only=census）。多すぎると Vulkan のバッファが作れなくなる
+func _test_census() -> void:
+	_section("census")
+	var meshes := {}
+	var materials := {}
+	var counts := {}
+	var by_parent := {}
+	for node in _main.find_children("*", "GeometryInstance3D", true, false):
+		var kind := node.get_class()
+		counts[kind] = counts.get(kind, 0) + 1
+		var owner_name := String(node.get_parent().get_class()) + ":" + String(node.get_parent().name).left(18)
+		var top := node
+		while top.get_parent() != _main and top.get_parent() != null:
+			top = top.get_parent()
+		by_parent[top.name] = by_parent.get(top.name, 0) + 1
+		var geometry := node as GeometryInstance3D
+		if geometry.material_override:
+			materials[geometry.material_override.get_rid()] = true
+		var mesh: Mesh = null
+		if node is MeshInstance3D:
+			mesh = (node as MeshInstance3D).mesh
+		elif node is MultiMeshInstance3D and (node as MultiMeshInstance3D).multimesh:
+			mesh = (node as MultiMeshInstance3D).multimesh.mesh
+			meshes[(node as MultiMeshInstance3D).multimesh.get_rid()] = true
+		if mesh:
+			meshes[mesh.get_rid()] = true
+			for i in mesh.get_surface_count():
+				var material := mesh.surface_get_material(i)
+				if material:
+					materials[material.get_rid()] = true
+	_note("geometry nodes %s" % str(counts))
+	_note("by top node %s" % str(by_parent))
+	_note("unique meshes/multimeshes %d, unique materials %d" % [meshes.size(), materials.size()])
+	# 置き物の種類ごとに、自分だけのメッシュ（ほかと共有していないもの）がいくつあるか
+	var mesh_users := {}
+	for node in _main.features.find_children("*", "GeometryInstance3D", true, false):
+		var rid: Variant = null
+		if node is MeshInstance3D and (node as MeshInstance3D).mesh:
+			rid = (node as MeshInstance3D).mesh.get_rid()
+		elif node is MultiMeshInstance3D and (node as MultiMeshInstance3D).multimesh:
+			rid = (node as MultiMeshInstance3D).multimesh.get_rid()
+		elif node is CPUParticles3D:
+			rid = node.get_instance_id()
+		var owner_node := node
+		while owner_node.get_parent() != _main.features:
+			owner_node = owner_node.get_parent()
+		var kind: String = owner_node.get_script().get_global_name() if owner_node.get_script() else owner_node.get_class()
+		if not mesh_users.has(kind):
+			mesh_users[kind] = {}
+		mesh_users[kind][rid] = true
+	var summary := {}
+	for kind: String in mesh_users:
+		summary[kind] = mesh_users[kind].size()
+	_note("unique meshes by feature kind %s" % str(summary))
+	var particles := {}
+	for node in _main.find_children("*", "CPUParticles3D", true, false):
+		var owner_node: Node = node
+		while owner_node.get_parent() and owner_node.get_parent() != _main.features and owner_node.get_parent() != _main:
+			owner_node = owner_node.get_parent()
+		var kind: String = owner_node.get_script().get_global_name() if owner_node.get_script() else owner_node.get_class()
+		particles[kind] = particles.get(kind, 0) + 1
+	_note("cpu particles by owner %s" % str(particles))
+
+
+## 最初のステージを、決まった場所から眺めた景色（作りこみの確認用。--only=look）
+func _look_shots() -> void:
+	_main.day.time = 20.0  # 昼
+	_calm_weather()
+	var terrain := _main.terrain
+	var c := MountainChain.centers[0]
+	var r: float = MountainChain.radii[0]
+	var top: float = MountainChain.peaks[0]
+	var start := terrain.spawn_point()
+	var foot := MountainChain.plain_ends[0]
+	var middle := MountainChain.plain_starts[0].lerp(foot, 0.5)
+	var summit := Vector3(c.x, top, c.y)
+	var inland3 := MountainChain.plain_ends[0] - MountainChain.plain_starts[0]
+	var back3 := -Vector3(inland3.x, 0.0, inland3.y).normalized()
+	var views := [
+		["look_beach.png", start + Vector3(0.0, 1.6, 0.0) - back3 * 6.0, start + back3 * 30.0 + Vector3(0.0, -1.0, 0.0)],
+		["look_coast.png", start + back3 * 40.0 + Vector3(60.0, 30.0, 0.0), start + Vector3(0.0, 0.0, 0.0)],
+		["look_start.png", start + Vector3(0.0, 1.5, 0.0), summit],
+		["look_plain_above.png", Vector3(middle.x + 30.0, terrain.height_at(middle.x, middle.y) + 45.0, middle.y + 60.0), Vector3(c.x, top * 0.35, c.y)],
+		["look_foot.png", Vector3(foot.x + 8.0, terrain.height_at(foot.x, foot.y) + 2.0, foot.y + 25.0), Vector3(c.x, top * 0.5, c.y)],
+		["look_mountain_south.png", Vector3(c.x - r * 0.4, top * 0.55, c.y + r * 2.6), Vector3(c.x, top * 0.5, c.y)],
+		["look_mountain_east.png", Vector3(c.x + r * 2.6, top * 0.7, c.y + r * 0.3), Vector3(c.x, top * 0.45, c.y)],
+		["look_mountain_west.png", Vector3(c.x - r * 2.4, top * 0.6, c.y - r * 0.5), Vector3(c.x, top * 0.45, c.y)],
+		["look_aerial.png", Vector3(c.x + r * 1.5, top * 2.2, c.y + r * 3.5), Vector3(c.x, top * 0.3, c.y - r * 0.5)],
+		["look_fog_far.png", Vector3(c.x + r * 0.8, top * 1.1, c.y + r * 2.2), Vector3(c.x, top * 0.9, c.y - r * 2.5)],
+	]
+	# 山の中腹の斜面を、すぐ近くから見る
+	var angle := deg_to_rad(110.0)
+	var slope := c + Vector2(cos(angle), sin(angle)) * r * 0.55
+	var slope_y := terrain.height_at(slope.x, slope.y)
+	views.append(["look_slope_close.png", Vector3(slope.x, slope_y + 6.0, slope.y) + Vector3(cos(angle), 0.0, sin(angle)) * 30.0, Vector3(slope.x, slope_y + 10.0, slope.y)])
+	# 頂上から、霧のかかった次のステージのほうを見る
+	var ahead := MountainChain.gate_direction(1)
+	views.append(["look_summit_fog.png", terrain.checkpoint(0) + Vector3(0.0, 1.8, 0.0), terrain.checkpoint(0) + Vector3(ahead.x, -0.1, ahead.y) * 50.0])
+	for view: Array in views:
+		await _shot_from(view[1], view[2], view[0])
+	# どの山の壁も、岩の出っぱりで入り組んでいるか（霧を消し、先のステージも見せて）
+	_main.fog.suppressed = true
+	var wall_rng := RandomNumberGenerator.new()
+	wall_rng.seed = 5
+	for stage in MountainChain.COUNT:
+		terrain.show_stage(stage)
+		_main.features.build_stage(stage)
+		var walls := terrain.random_wall_points(wall_rng, 2, stage, 30.0)
+		for k in walls.size():
+			var p: Vector3 = walls[k][0]
+			var n: Vector3 = walls[k][1]
+			var out := Vector3(n.x, 0.0, n.z).normalized()
+			await _shot_from(p + out * 16.0 + Vector3.UP * 4.0, p + Vector3.UP * 2.0, "look_wall_%d_%d.png" % [stage, k])
+	_main.fog.suppressed = false
+	# 山の上の造形物を、近くから（最初の山にあるもの）
+	for prop_name: String in _main.features.mountain_props:
+		for t: Transform3D in _main.features.mountain_props[prop_name]:
+			if _main.terrain.stage_of(t.origin) != 0:
+				continue
+			var out := Vector3(t.basis.z.x, 0.0, t.basis.z.z).normalized()
+			var side := out.cross(Vector3.UP)
+			var eye := t.origin + out * 4.5 + side * 1.5 + Vector3.UP * 2.2
+			await _shot_from(eye, t.origin + Vector3.UP * (0.0 if prop_name in ["bridge", "chain"] else 0.8), "look_mp_%s.png" % prop_name)
+			break
+	# 平地の建物・巨木を、近くから
+	var shown := {}
+	for node in _main.features.get_children():
+		if node.has_meta("prop") and not shown.has(node.get_meta("prop")):
+			shown[node.get_meta("prop")] = true
+			var at := (node as Node3D).global_position
+			var reach := 30.0 if node.get_meta("prop") == "shinboku" else 11.0
+			await _shot_from(at + Vector3(reach * 0.7, reach * 0.45, reach * 0.7), at + Vector3.UP * reach * 0.3, "look_prop_%s.png" % node.get_meta("prop"))
 
 
 ## 各地帯の足場に立ち、山の外側を見下ろした景色。山頂では祠を見る
@@ -1168,13 +2348,16 @@ func _biome_shots() -> void:
 
 # --- 道具 ---
 
-## ロビーに戻ってからバスに乗り直し、登山口から始める（テストでは毎回同じ山）
-func _restart() -> void:
+## ロビーに戻ってからバスに乗り直し、登山口から始める（テストでは毎回同じ山）。
+## all_stages なら、すべてのステージをすぐに出す（ふつうは山頂に着くたびに現れる）
+func _restart(all_stages := true) -> void:
 	Input.action_release("move_forward")
 	Input.action_release("grab")
 	_main.call("_return_to_lobby")
-	_main.player.global_position = _main.lobby.get("_bus_door") + Vector3(0.0, 0.3, 0.0)
+	_main.player.global_position = _main.lobby.get("_board_point") + Vector3(0.0, 0.3, 0.0)
 	await _wait_for_climb()
+	if all_stages:
+		_main.unlock_all_stages()
 
 
 ## バスに乗って山に着く（登り始められる）まで待つ
@@ -1189,6 +2372,7 @@ func _wait_for_climb() -> bool:
 ## 最初の崖に取りつくまで前進する（つかんだまま、少し登った状態で返す）。steep なら切り立った壁まで登る
 func _climb_onto_first_wall(steep := false) -> bool:
 	var player := _main.player
+	player.spawn_at(_main.terrain.foot_point(0), _main.terrain.foot_yaw(0))  # 最初の山の裾から、山へ向かって歩く
 	Input.action_press("move_forward")
 	Input.action_press("grab")
 	for i in 160 if steep else 80:

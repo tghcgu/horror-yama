@@ -31,8 +31,8 @@ static func vertex_material(texture_name := "", texture_scale := 0.5, saturation
 static func terrain_material() -> ShaderMaterial:
 	var mat := ShaderMaterial.new()
 	mat.shader = TERRAIN_SHADER
-	mat.set_shader_parameter("rock_low", texture("rock_mossy"))
-	mat.set_shader_parameter("rock_high", texture("rock"))
+	for biome: String in ["forest", "crag", "snow", "summit"]:
+		mat.set_shader_parameter("rock_" + biome, texture("rock_" + biome))  # 地帯ごとの岩肌
 	mat.set_shader_parameter("ground_forest", texture("ground_forest"))
 	mat.set_shader_parameter("ground_crag", texture("ground_crag"))
 	mat.set_shader_parameter("ground_snow", texture("ground_snow"))

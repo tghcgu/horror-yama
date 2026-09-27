@@ -28,6 +28,40 @@ static func footstep() -> AudioStreamWAV:
 	return _to_wav(samples, false)
 
 
+## ナタを振る「ヒュッ」：だんだん高くなる風切り音
+static func whoosh() -> AudioStreamWAV:
+	var duration := 0.24
+	var samples := _buffer(duration)
+	var low := 0.0
+	for i in samples.size():
+		var s := float(i) / RATE
+		var t := s / duration
+		low += (0.04 + 0.35 * t) * (_white() - low)
+		samples[i] = low * sin(PI * t) * 2.2
+	return _to_wav(samples, false)
+
+
+## 刃が肉に食いこむ「ザクッ」
+static func chop() -> AudioStreamWAV:
+	var samples := _buffer(0.28)
+	var low := 0.0
+	for i in samples.size():
+		var s := float(i) / RATE
+		low += 0.3 * (_white() - low)
+		samples[i] = (low * exp(-s * 26.0) * 1.5 + _thump(s, 75.0) * 0.9) * 0.85
+	return _to_wav(samples, false)
+
+
+## 刃が岩に当たる「カキン」
+static func ting() -> AudioStreamWAV:
+	var samples := _buffer(0.45)
+	for i in samples.size():
+		var s := float(i) / RATE
+		var ring := sin(TAU * 2350.0 * s) + 0.6 * sin(TAU * 3720.0 * s) + 0.3 * sin(TAU * 5210.0 * s)
+		samples[i] = (ring * exp(-s * 12.0) * 0.3 + _white() * exp(-s * 80.0) * 0.6) * 0.8
+	return _to_wav(samples, false)
+
+
 ## 着地の「ドスッ」
 static func thud() -> AudioStreamWAV:
 	var samples := _buffer(0.35)
@@ -95,6 +129,38 @@ static func growl() -> AudioStreamWAV:
 		phase += TAU * (48.0 + 6.0 * sin(TAU * 0.5 * s)) / RATE
 		samples[i] = (low * 3.0 * rattle + sin(phase) * 0.25) * 0.8
 	return _to_wav(samples, true)
+
+
+## 獣が一度だけうなる「グルル…」（くり返さない。だんだん消える）
+static func grunt() -> AudioStreamWAV:
+	var duration := 0.9
+	var samples := _buffer(duration)
+	var low := 0.0
+	var phase := 0.0
+	for i in samples.size():
+		var s := float(i) / RATE
+		low += 0.05 * (_white() - low)
+		var rattle := 0.55 + 0.45 * sin(TAU * 11.0 * s)
+		phase += TAU * (60.0 - 12.0 * s) / RATE
+		var fade := minf(s / 0.05, 1.0) * (1.0 - s / duration)
+		samples[i] = (low * 3.0 * rattle + sin(phase) * 0.25) * 0.8 * fade
+	return _to_wav(samples, false)
+
+
+## 犬の短い「ワン」
+static func bark() -> AudioStreamWAV:
+	var duration := 0.22
+	var samples := _buffer(duration)
+	var phase := 0.0
+	var low := 0.0
+	for i in samples.size():
+		var s := float(i) / RATE
+		var pitch := 520.0 - 900.0 * s  # 高い所から、すっと下がる
+		phase += TAU * pitch / RATE
+		low += 0.3 * (_white() - low)
+		var shape := sin(PI * minf(s / duration, 1.0)) * exp(-s * 6.0)
+		samples[i] = (sin(phase) * 0.5 + sin(phase * 2.0) * 0.25 + low * 0.5) * shape * 0.7
+	return _to_wav(samples, false)
 
 
 ## アイテムを拾った「チリン」

@@ -16,7 +16,9 @@ var phase := "idle"
 
 var _timer := 0.0
 var _launched := false
-var _steam: CPUParticles3D
+var _steam: LazyParticles
+var _steam_speed := 0.6
+var _steam_ratio := 0.15
 var _rumble: AudioStreamPlayer3D
 var _blast: AudioStreamPlayer3D
 
@@ -39,24 +41,9 @@ func setup(pos: Vector3, owner_player: Player) -> void:
 	hole.radial_segments = 8
 	vent.add(hole, Vector3(0.0, 0.03, 0.0), Vector3.ZERO, Vector3.ONE, Color(0.05, 0.04, 0.02))
 	vent.instance(self, Psx.vertex_material("ground_crag", 0.5, 1.0))
-	_steam = CPUParticles3D.new()
-	_steam.amount = 60
-	_steam.lifetime = 1.6
-	_steam.emission_shape = CPUParticles3D.EMISSION_SHAPE_SPHERE
-	_steam.emission_sphere_radius = 0.25
-	_steam.direction = Vector3.UP
-	_steam.spread = 12.0
-	_steam.gravity = Vector3.ZERO
-	_steam.damping_min = 0.5
-	_steam.damping_max = 1.0
-	_steam.scale_amount_min = 3.0
-	_steam.scale_amount_max = 7.0
-	var puff := QuadMesh.new()
-	puff.size = Vector2(0.4, 0.4)
-	puff.material = CreatureKit.puff_material(Color(0.95, 0.95, 0.9, 0.45))
-	_steam.mesh = puff
-	_steam.color_ramp = CreatureKit.fade_ramp()
+	_steam = LazyParticles.new()
 	add_child(_steam)
+	_steam.setup(_make_steam, player, 60.0)
 	_rumble = _sound(Sfx.rumble(), 5.0)
 	_blast = _sound(Sfx.blast(), 8.0)
 	_set_steam(0.6, 0.15)
@@ -72,10 +59,17 @@ func _sound(stream: AudioStream, unit: float) -> AudioStreamPlayer3D:
 
 
 func _set_steam(speed: float, ratio: float) -> void:
-	_steam.initial_velocity_min = speed * 0.7
-	_steam.initial_velocity_max = speed
-	_steam.scale_amount_min = 1.0 + ratio * 3.0
-	_steam.scale_amount_max = 2.0 + ratio * 6.0
+	_steam_speed = speed
+	_steam_ratio = ratio
+	if _steam.particles:
+		_apply_steam(_steam.particles)
+
+
+func _apply_steam(particles: CPUParticles3D) -> void:
+	particles.initial_velocity_min = _steam_speed * 0.7
+	particles.initial_velocity_max = _steam_speed
+	particles.scale_amount_min = 1.0 + _steam_ratio * 3.0
+	particles.scale_amount_max = 2.0 + _steam_ratio * 6.0
 
 
 func _physics_process(delta: float) -> void:
@@ -109,3 +103,26 @@ func erupt() -> void:
 	_launched = false
 	_blast.play()
 	_set_steam(12.0, 1.0)
+
+
+## 粒子を作る（LazyParticles が、使うときにだけ呼ぶ）
+func _make_steam() -> CPUParticles3D:
+	var particles := CPUParticles3D.new()
+	particles.amount = 60
+	particles.lifetime = 1.6
+	particles.emission_shape = CPUParticles3D.EMISSION_SHAPE_SPHERE
+	particles.emission_sphere_radius = 0.25
+	particles.direction = Vector3.UP
+	particles.spread = 12.0
+	particles.gravity = Vector3.ZERO
+	particles.damping_min = 0.5
+	particles.damping_max = 1.0
+	particles.scale_amount_min = 3.0
+	particles.scale_amount_max = 7.0
+	var puff := QuadMesh.new()
+	puff.size = Vector2(0.4, 0.4)
+	puff.material = CreatureKit.puff_material(Color(0.95, 0.95, 0.9, 0.45))
+	particles.mesh = puff
+	particles.color_ramp = CreatureKit.fade_ramp()
+	_apply_steam(particles)
+	return particles

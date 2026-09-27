@@ -5,22 +5,26 @@ render_mode diffuse_lambert, specular_disabled;
 
 #include "res://shaders/psx_common.gdshaderinc"
 
-uniform sampler2D rock_low : source_color, filter_nearest, repeat_enable;   // 樹海の崖（苔むした岩）
-uniform sampler2D rock_high : source_color, filter_nearest, repeat_enable;  // それ以外の崖
+// 地帯ごとの岩肌（tools/textures/paint_rocks.py で描いた模様）
+uniform sampler2D rock_forest : source_color, filter_nearest, repeat_enable;  // 樹海：湿った黒い岩と苔
+uniform sampler2D rock_crag : source_color, filter_nearest, repeat_enable;    // 岩場：花崗岩
+uniform sampler2D rock_snow : source_color, filter_nearest, repeat_enable;    // 雪山：霜と雪の筋
+uniform sampler2D rock_summit : source_color, filter_nearest, repeat_enable;  // 霊峰：黒い玄武岩
 uniform sampler2D ground_forest : source_color, filter_nearest, repeat_enable;
 uniform sampler2D ground_crag : source_color, filter_nearest, repeat_enable;
 uniform sampler2D ground_snow : source_color, filter_nearest, repeat_enable;
 uniform sampler2D ground_summit : source_color, filter_nearest, repeat_enable;
 
-uniform vec3 rock_tint_forest : source_color = vec3(0.55, 0.6, 0.5);
-uniform vec3 rock_tint_crag : source_color = vec3(0.75, 0.72, 0.7);
-uniform vec3 rock_tint_snow : source_color = vec3(0.7, 0.76, 0.85);
-uniform vec3 rock_tint_summit : source_color = vec3(0.4, 0.37, 0.38);
+uniform vec3 rock_tint_forest : source_color = vec3(1.0);
+uniform vec3 rock_tint_crag : source_color = vec3(1.0);
+uniform vec3 rock_tint_snow : source_color = vec3(1.0);
+uniform vec3 rock_tint_summit : source_color = vec3(1.0);
 uniform vec3 ground_tint_forest : source_color = vec3(0.45, 0.5, 0.3);
 uniform vec3 ground_tint_crag : source_color = vec3(0.85, 0.8, 0.75);
 uniform vec3 ground_tint_snow : source_color = vec3(1.0, 1.0, 1.0);
 uniform vec3 ground_tint_summit : source_color = vec3(0.55, 0.5, 0.5);
-uniform float rock_saturation = 0.35;  // 岩の素材は赤っぽいので、色を抜いて灰色寄りにする
+uniform vec2 beach_origin = vec2(0.0);           // 最初の平地の入り口（ここからうしろが砂浜）
+uniform vec2 beach_direction = vec2(0.0, -1.0);  // 平地の奥へ向かう向き
 uniform float texture_scale = 0.33;    // 1 m あたりのくり返し回数（0.33 = 3 m で 1 枚）
 
 varying vec3 world_position;
@@ -41,17 +45,37 @@ void fragment() {
 	vec3 n = world_normal;
 	vec4 w = biome_weights / max(dot(biome_weights, vec4(1.0)), 0.001);
 
-	vec3 ground = psx_triplanar(ground_forest, p, n) * ground_tint_forest * w.x
-		+ psx_triplanar(ground_crag, p, n) * ground_tint_crag * w.y
-		+ psx_triplanar(ground_snow, p, n) * ground_tint_snow * w.z
-		+ psx_triplanar(ground_summit, p, n) * ground_tint_summit * w.w;
-
-	vec3 low = psx_saturate(psx_triplanar(rock_low, p, n), rock_saturation);
-	vec3 high = psx_saturate(psx_triplanar(rock_high, p, n), rock_saturation);
-	vec3 rock = low * rock_tint_forest * w.x
-		+ high * (rock_tint_crag * w.y + rock_tint_snow * w.z + rock_tint_summit * w.w);
-
+	// 素材は、その場所にある地帯のぶんだけ読む（ほとんどの場所は 1 つの地帯）。
+	// 地面か岩肌かも、どちらかしか見えない所では、見えるほうだけ読む
 	float flatness = smoothstep(0.62, 0.8, n.y);
-	ALBEDO = mix(rock, ground, flatness) * shade;
+	const float LITTLE = 0.02;
+	vec3 ground = vec3(0.0);
+	if (flatness > 0.0) {
+		if (w.x > LITTLE) { ground += psx_triplanar(ground_forest, p, n) * ground_tint_forest * w.x; }
+		if (w.y > LITTLE) { ground += psx_triplanar(ground_crag, p, n) * ground_tint_crag * w.y; }
+		if (w.z > LITTLE) { ground += psx_triplanar(ground_snow, p, n) * ground_tint_snow * w.z; }
+		if (w.w > LITTLE) { ground += psx_triplanar(ground_summit, p, n) * ground_tint_summit * w.w; }
+	}
+	vec3 rock = vec3(0.0);
+	if (flatness < 1.0) {
+		if (w.x > LITTLE) { rock += psx_triplanar(rock_forest, p, n) * rock_tint_forest * w.x; }
+		if (w.y > LITTLE) { rock += psx_triplanar(rock_crag, p, n) * rock_tint_crag * w.y; }
+		if (w.z > LITTLE) { rock += psx_triplanar(rock_snow, p, n) * rock_tint_snow * w.z; }
+		if (w.w > LITTLE) { rock += psx_triplanar(rock_summit, p, n) * rock_tint_summit * w.w; }
+	}
+	// 同じ模様のくり返しが目立たないように、ずっと大きな周期で明るさをゆらす
+	rock *= 0.72 + 0.56 * psx_triplanar(rock_crag, p * 0.11, n).r;
+	// 切り立った岩肌は暗くする（重なった巨大な岩のすき間の、奥の影に見える）
+	rock *= mix(0.55, 1.0, smoothstep(0.05, 0.6, n.y));
+	vec3 surface = mix(rock, ground, flatness);
+	// 海面の近く（島の砂浜と、波打ち際）は砂。濡れた所は暗い
+	float behind = -dot(world_position.xz - beach_origin, beach_direction);  // 最初の平地の入り口から、うしろへの距離
+	float beach = max(smoothstep(14.0, 24.0, behind), 1.0 - smoothstep(-0.8, 0.2, world_position.y));
+	if (beach > 0.0) {
+		vec3 sand = psx_triplanar(ground_crag, p * 0.8, n) * vec3(1.05, 0.95, 0.72);
+		sand *= mix(0.62, 1.0, smoothstep(-1.6, -0.4, world_position.y));
+		surface = mix(surface, sand, beach);
+	}
+	ALBEDO = surface * shade;
 	ROUGHNESS = 1.0;
 }

@@ -23,21 +23,35 @@ var _alert := false
 var _moving := false
 var _poser: BonePoser
 var _hiss: AudioStreamPlayer3D
+var _model: Node3D
+var _health := 45.0  # （物理の攻撃は 4 分の 1 しか入らない。Combat）
+var _dead := false
 
 
 func _ready() -> void:
 	add_to_group(&"creatures")
+	add_to_group(&"night_monsters")
 	var skin := CreatureKit.skin(Color.WHITE, Color(0.55, 0.2, 0.15), 0.15, 0.75)
-	var model := CreatureKit.load_model(MODEL, skin, {
+	_model = CreatureKit.load_model(MODEL, skin, {
 		"Eye": CreatureKit.glow(Color(1.0, 0.12, 0.08), 8.0),
 		"Claw": CreatureKit.flat(Color(0.06, 0.05, 0.04), 0.3),
 	})
-	add_child(model)
-	_poser = BonePoser.new(model.find_children("*", "Skeleton3D", true, false)[0] as Skeleton3D)
+	add_child(_model)
+	_poser = BonePoser.new(_model.find_children("*", "Skeleton3D", true, false)[0] as Skeleton3D)
 	_hiss = AudioStreamPlayer3D.new()
 	_hiss.stream = Sfx.hiss()
 	_hiss.unit_size = 4.0
 	add_child(_hiss)
+
+
+## 化け物は夜だけ出る。昼は岩の割れ目に潜んでいて、姿も見せず、噛みつきもしない
+func set_awake(on: bool) -> void:
+	_model.visible = on
+	set_physics_process(on)
+	set_process(on)
+	if not on:
+		global_position = _home
+		_goal = _home
 
 
 ## ツリーに追加してから呼ぶ。pos は壁の表面、normal は壁の外向き
@@ -81,6 +95,37 @@ func _physics_process(delta: float) -> void:
 func scare(_from: Vector3) -> void:
 	_cooldown = 12.0
 	_goal = _pick_goal()
+
+
+## ナタや投げた物で叩かれた：びくっとして逃げ回る。弱りきると、壁からはがれて落ちていく
+func hit(damage: float, _attacker: Node3D) -> void:
+	if _dead:
+		return
+	_health -= damage
+	_hiss.pitch_scale = randf_range(1.3, 1.6)
+	_hiss.play()
+	_model.scale = Vector3.ONE * 1.15
+	create_tween().tween_property(_model, "scale", Vector3.ONE, 0.2)
+	if _health > 0.0:
+		scare(global_position)
+		return
+	_dead = true
+	remove_from_group(&"creatures")
+	remove_from_group(&"night_monsters")
+	set_physics_process(false)
+	set_process(false)
+	var fall := create_tween()
+	fall.tween_property(self, "global_position", global_position + _normal * 1.5 - Vector3.UP * 12.0, 1.2).set_ease(Tween.EASE_IN)
+	fall.parallel().tween_property(_model, "rotation:z", PI, 0.8)
+	fall.tween_callback(queue_free)
+
+
+func hit_center() -> Vector3:
+	return global_position + _normal * 0.2
+
+
+func hit_radius() -> float:
+	return 0.6
 
 
 ## 這うときは脚を交互に持ち上げ、警戒中は前脚を振り上げて震わせ、牙をかちかち鳴らす

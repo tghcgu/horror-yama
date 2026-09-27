@@ -10,14 +10,17 @@ const CONTROLS := [
 	["WASD", "移動"],
 	["Shift", "ダッシュ"],
 	["Space", "ジャンプ／登りながら飛びつく"],
-	["左クリック長押し", "壁をつかむ"],
-	["1〜6・ホイール", "アイテムを選ぶ"],
-	["右クリック", "選んだアイテムを使う"],
-	["Q", "選んだアイテムを投げる"],
+	["右クリック長押し", "壁をつかむ（手ぶらなら左クリックでも）"],
+	["1〜6・ホイール", "アイテムを手に持つ（同じ数字でしまう）"],
+	["左クリック", "手に持ったアイテムを使う（ナタは押しっぱなしで振り続ける）"],
+	["Q（長押しでためる）", "選んだアイテムを投げる（ためるほど強く。当たると傷を負わせる）"],
 	["E", "拾う・調べる"],
+	["T（長押し）", "エモート"],
+	["G（長押し）", "手を差し伸べて引き上げる"],
 	["F", "ヘッドライト"],
 	["R", "最初から"],
 	["F1", "空を飛ぶ（テスト用）"],
+	["F2", "仲間のダミーを呼ぶ（テスト用）"],
 ]
 
 var _root: Control
@@ -37,6 +40,7 @@ func is_open() -> bool:
 
 
 func open() -> void:
+	InputSetup.release_all()  # 押しっぱなしになってしまった入力は、ここで解ける
 	_open = true
 	_root.visible = true
 	get_tree().paused = true
@@ -45,6 +49,7 @@ func open() -> void:
 
 
 func close() -> void:
+	InputSetup.release_all()
 	_open = false
 	_root.visible = false
 	get_tree().paused = false
@@ -88,12 +93,15 @@ func _build() -> void:
 	# 左：メニューと設定
 	var left := VBoxContainer.new()
 	left.custom_minimum_size = Vector2(420.0, 0.0)
-	left.add_theme_constant_override("separation", 12)
+	left.add_theme_constant_override("separation", 8)
 	columns.add_child(left)
 	left.add_child(_label("一時停止", 32))
-	_resume_button = _button(left, "ゲームに戻る", close)
-	_button(left, "最初からやり直す", _on_restart_pressed)
-	_button(left, "ゲームを終了", _on_quit_pressed)
+	var buttons := HBoxContainer.new()
+	buttons.add_theme_constant_override("separation", 8)
+	left.add_child(buttons)
+	_resume_button = _button(buttons, "ゲームに戻る", close)
+	_button(buttons, "やり直す", _on_restart_pressed)
+	_button(buttons, "ゲームを終了", _on_quit_pressed)
 	left.add_child(HSeparator.new())
 	left.add_child(_heading("設定"))
 	_slider(left, "マウス感度", 0.2, 3.0, 0.05, Settings.mouse_sensitivity, "%.2f",
@@ -102,15 +110,20 @@ func _build() -> void:
 		func(v: float) -> void: Settings.fov = v)
 	_slider(left, "明るさ", 0.5, 2.0, 0.05, Settings.brightness, "%.2f",
 		func(v: float) -> void: Settings.brightness = v)
-	_slider(left, "音量", 0.0, 1.0, 0.01, Settings.volume, "%.0f%%",
-		func(v: float) -> void: Settings.volume = v, 100.0)
 	_choice(left, "画面の粗さ", Settings.RETRO_NAMES, Settings.retro,
 		func(v: int) -> void: Settings.retro = v)
+	_choice(left, "描画の細かさ", Settings.DETAIL_NAMES, Settings.detail,
+		func(v: int) -> void: Settings.detail = v)
 	var fullscreen := CheckButton.new()
 	fullscreen.text = "フルスクリーン"
 	fullscreen.button_pressed = Settings.fullscreen
 	fullscreen.toggled.connect(_on_fullscreen_toggled)
 	left.add_child(fullscreen)
+	left.add_child(_heading("音量"))
+	for entry: Array in Settings.VOLUMES:
+		var key: String = entry[0]
+		_slider(left, entry[2], 0.0, 1.0, 0.01, Settings.get(key), "%.0f%%",
+			func(v: float) -> void: Settings.set(key, v), 100.0)
 
 	# 右：操作方法
 	var right := VBoxContainer.new()

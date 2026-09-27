@@ -14,6 +14,7 @@ const LIFETIME := 50.0
 const VIEW_COS := 0.6
 
 var player: Player
+var steal_chance := 0.2  # そばまで来ても、たいていは盗みそこねる
 var terrain: Terrain
 var features: MountainFeatures
 var state := "hidden"
@@ -111,8 +112,12 @@ func _physics_process(delta: float) -> void:
 				vanish()
 
 
-## すぐそばまで来た：持ち物をひとつ盗んで逃げる
+## すぐそばまで来た：持ち物をひとつ盗んで逃げる（たいていは盗みそこねて、笑いながら消える）
 func steal() -> void:
+	if randf() > steal_chance:
+		player.message.emit("くすくす……と笑い声がして、木霊は消えた")
+		vanish()
+		return
 	carrying = player.steal_item()
 	if carrying < 0:
 		vanish()  # 何も持っていなかった

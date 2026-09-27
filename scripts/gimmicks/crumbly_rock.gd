@@ -9,7 +9,7 @@ const HOLD_TIME := 1.4
 var strained := 0.0
 
 var _material: Material
-var _dust: CPUParticles3D
+var _dust: LazyParticles
 var _creak: AudioStreamPlayer3D
 var _home := Vector3.ZERO
 var _broken := false
@@ -46,18 +46,9 @@ func setup(pos: Vector3, normal: Vector3) -> void:
 			Vector3(0.0, 0.0, randf_range(-1.2, 1.2)), Vector3(randf_range(0.4, 1.1), 0.05, 0.03), Color(0.05, 0.03, 0.02))
 	_material = Psx.material("rock", Color(0.75, 0.42, 0.3), 0.5, 0.7)
 	rock.instance(self, Psx.vertex_material("rock", 0.5, 0.7))
-	_dust = CPUParticles3D.new()
-	_dust.emitting = false
-	_dust.amount = 16
-	_dust.lifetime = 1.0
-	_dust.emission_shape = CPUParticles3D.EMISSION_SHAPE_BOX
-	_dust.emission_box_extents = size * 0.5
-	_dust.gravity = Vector3(0.0, -6.0, 0.0)
-	var grit := BoxMesh.new()
-	grit.size = Vector3.ONE * 0.05
-	grit.material = Psx.material("", Color(0.6, 0.4, 0.3))
-	_dust.mesh = grit
+	_dust = LazyParticles.new()
 	add_child(_dust)
+	_dust.setup(_make_dust.bind(size))
 	_creak = AudioStreamPlayer3D.new()
 	_creak.stream = Sfx.crack()
 	_creak.unit_size = 5.0
@@ -69,7 +60,7 @@ func strain(amount: float) -> bool:
 	if _broken:
 		return true
 	strained += amount
-	_dust.emitting = true
+	_dust.set_emitting(true)
 	if randf() < 0.08:
 		_creak.pitch_scale = randf_range(0.5, 0.9)
 		_creak.play()
@@ -118,4 +109,20 @@ static func _unit_box() -> BoxMesh:
 func _process(_delta: float) -> void:
 	if strained > 0.0 and not _broken:
 		global_position = _home + Vector3(randf_range(-1.0, 1.0), randf_range(-1.0, 1.0), 0.0) * 0.02 * strained
-		_dust.emitting = strained > 0.3
+		_dust.set_emitting(strained > 0.3)
+
+
+## 粒子を作る（LazyParticles が、使うときにだけ呼ぶ）
+func _make_dust(size: Vector3) -> CPUParticles3D:
+	var particles := CPUParticles3D.new()
+	particles.emitting = false
+	particles.amount = 16
+	particles.lifetime = 1.0
+	particles.emission_shape = CPUParticles3D.EMISSION_SHAPE_BOX
+	particles.emission_box_extents = size * 0.5
+	particles.gravity = Vector3(0.0, -6.0, 0.0)
+	var grit := BoxMesh.new()
+	grit.size = Vector3.ONE * 0.05
+	grit.material = Psx.material("", Color(0.6, 0.4, 0.3))
+	particles.mesh = grit
+	return particles

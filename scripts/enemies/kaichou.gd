@@ -9,20 +9,24 @@ const SIZE := 1.1
 const CIRCLE_RADIUS := 14.0
 const CIRCLE_HEIGHT := 12.0
 const CIRCLE_SPEED := 0.45
-const DIVE_INTERVAL := Vector2(9.0, 15.0)
+const DIVE_INTERVAL := Vector2(40.0, 70.0)  # ほとんどは空を回って鳴くだけ
 const DIVE_SPEED := 17.0
-const HIT_DISTANCE := 1.3
-const INJURY := 12.0
-const STAMINA_LOSS := 25.0
+const HIT_DISTANCE := 1.0
+const MAX_DIVES := 2     # これだけ急降下したら、飛び去る
+const INJURY := 8.0
+const STAMINA_LOSS := 15.0
 const LIGHT_COS := 0.93
 
 var player: Player
 var state := "gone"
+var aim_error := 2.2  # 狙いのずれ (m)
 
 var _angle := 0.0
 var _timer := 0.0
 var _time := 0.0
 var _velocity := Vector3.ZERO
+var _dive_target := Vector3.ZERO
+var _dives := 0
 var _poser: BonePoser
 var _screech: AudioStreamPlayer3D
 var _wings: AudioStreamPlayer3D
@@ -62,6 +66,7 @@ func arrive(owner_player: Player) -> void:
 	player = owner_player
 	state = "circling"
 	visible = true
+	_dives = 0
 	_angle = randf() * TAU
 	_timer = randf_range(DIVE_INTERVAL.x, DIVE_INTERVAL.y)
 	global_position = _circle_point()
@@ -82,6 +87,10 @@ func scare(_from: Vector3) -> void:
 func dive() -> void:
 	state = "diving"
 	_timer = 3.0
+	_dives += 1
+	# 降下を始めたときの場所めがけて突っ込む（途中で動けばよけられる）。狙いも少しずれる
+	var error := Vector3(randf_range(-1.0, 1.0), 0.0, randf_range(-1.0, 1.0)).normalized() * randf_range(0.0, aim_error)
+	_dive_target = player.global_position + Vector3.UP * 1.1 + error
 	_screech.pitch_scale = randf_range(0.9, 1.1)
 	_screech.play()
 
@@ -104,16 +113,18 @@ func _physics_process(delta: float) -> void:
 			if _timer <= 0.0 and not player.frozen and not player.bell_ringing and not Ward.blocks(get_tree(), player.global_position):
 				dive()
 		"diving":
-			var target := player.global_position + Vector3.UP * 1.1
-			var to := target - global_position
+			var to := _dive_target - global_position
 			_velocity = _velocity.lerp(to.normalized() * DIVE_SPEED, 1.0 - exp(-4.0 * delta))
 			global_position += _velocity * delta
+			var to_player := player.global_position + Vector3.UP * 1.1 - global_position
 			if _is_lit():
 				_pull_up()  # まぶしくてそれていく
-			elif to.length() < HIT_DISTANCE and not player.frozen:
+			elif to.length() < 0.8:
+				_pull_up()  # 狙った場所を通り過ぎた
+			elif to_player.length() < HIT_DISTANCE and not player.frozen:
 				var push := _velocity.normalized() * 4.0
 				if player.state == Player.State.CLIMB:
-					push += player.wall_normal() * 2.0
+					push += player.wall_normal() * 1.0
 				player.stamina = maxf(player.stamina - STAMINA_LOSS, 0.0)
 				player.knock(push, INJURY)
 				_pull_up()
@@ -122,7 +133,9 @@ func _physics_process(delta: float) -> void:
 		"rising":
 			global_position += _velocity * delta
 			_velocity = _velocity.lerp(Vector3.UP * 8.0, 1.0 - exp(-2.0 * delta))
-			if _timer <= 0.0:
+			if _timer <= 0.0 and _dives >= MAX_DIVES:
+				leave()
+			elif _timer <= 0.0:
 				state = "circling"
 				_timer = randf_range(DIVE_INTERVAL.x, DIVE_INTERVAL.y)
 				_angle = atan2(global_position.z - player.global_position.z, global_position.x - player.global_position.x)
@@ -132,7 +145,7 @@ func _physics_process(delta: float) -> void:
 				state = "gone"
 				visible = false
 	var motion := global_position - previous
-	if motion.length() > 0.001 and absf(motion.normalized().y) < 0.97:
+	if motion.length() > 0.01 and absf(motion.normalized().y) < 0.97:
 		look_at(global_position + motion, Vector3.UP)
 
 

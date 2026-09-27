@@ -7,14 +7,18 @@ extends Node
 ##   岩場・雪山：怪鳥（空を旋回して急降下してくる）
 ##   雪山：白い人（見ていない間だけ近づく）、雪潜り（雪の下から噛みつく）
 ##   霊峰：影法師（目を離すたびに近づく）、壁の手、鬼火（夜はどの山にも出る）
-## 夜の“何か”、壁の岩グモ、木の上の手長はここでは扱わない。
+##   どの山にも：彷徨う亡者（平地も山肌もさまよい、気づくと寄ってくる。昼はまれ、夜は増える）
+## 化け物は、日が暮れてから夜が明けるまでしか出ない（昼の山にいるのは、動物と、山そのものの危険だけ）。
+## 夜が明けると、出ている化け物はみんな消える。壁の岩グモと木の上の手長（グループ night_monsters）も、昼は姿を消す。
+## 夜の“何か”はここでは扱わない。
 
-const PEEKER_CHANCE_DAY := 0.3
-const PEEKER_CHANCE_NIGHT := 0.55
-const PEEKER_COOLDOWN := 15.0
+const PEEKER_CHANCE_DAY := 0.15
+const PEEKER_CHANCE_NIGHT := 0.3
+const PEEKER_COOLDOWN := 45.0
 const KODAMA_COUNT := 5
-const ONIBI_COUNT := 4
+const ONIBI_COUNT := 2
 const HAND_COUNT := 3
+const WANDERER_COUNT := 3
 
 var player: Player
 var terrain: Terrain
@@ -29,12 +33,15 @@ var yukimoguri: Yukimoguri
 var onibi: Array[Onibi] = []
 var shadow: ShadowClimber
 var hands: Array[WallHand] = []
+var wanderers: Array[Wanderer] = []
 
 var _peeker_cooldown := 8.0
 var _was_climbing := false
 var _crag_ledges := PackedVector3Array()
 var _cooldowns := {}  # 化け物の名前 → 次に出せるまでの秒数
 var _check := 0.0
+var _was_resting := false
+var _awake: Variant = null  # 化け物が出る時間か（null = まだ決めていない。山を作り直したら決め直す）
 
 
 func setup(owner_player: Player, mountain: Terrain, day_cycle: DayCycle) -> void:
@@ -69,6 +76,10 @@ func setup(owner_player: Player, mountain: Terrain, day_cycle: DayCycle) -> void
 		var hand := WallHand.new()
 		add_child(hand)
 		hands.append(hand)
+	for i in WANDERER_COUNT:
+		var wanderer := Wanderer.new()
+		add_child(wanderer)
+		wanderers.append(wanderer)
 
 
 ## 山を作り直したあとに呼ぶ（石投げが立つ岩棚を探しておく）
@@ -79,9 +90,22 @@ func prepare(mountain_features: MountainFeatures) -> void:
 	var rng := RandomNumberGenerator.new()
 	rng.seed = terrain.run_seed + 21
 	_crag_ledges = terrain.random_ledge_points(rng, 60, Biomes.Id.CRAG, 5.0, 1, PackedVector3Array(), 0.0, 8.0, 0.8)
+	refresh_monsters()  # 新しく置いた岩グモや手長にも、いまの時間を伝える
+
+
+## 新しいステージの岩グモや手長にも、いまが化け物の出る時間かを、すぐに伝える
+func refresh_monsters() -> void:
+	_awake = day.monsters_out()
+	get_tree().call_group(&"night_monsters", "set_awake", _awake)
 
 
 func reset() -> void:
+	_dismiss_all()
+	_cooldowns = {"kodama": 20.0, "ishinage": 15.0, "kaichou": 20.0, "yukimoguri": 8.0, "onibi": 10.0, "shadow": 15.0, "hand": 10.0, "wanderer": 10.0}
+
+
+## 出ている化け物を、みんな消す
+func _dismiss_all() -> void:
 	peeker.hide_now()
 	pale_one.vanish()
 	pale_one.cooldown = 0.0
@@ -98,7 +122,8 @@ func reset() -> void:
 	for hand in hands:
 		hand.state = "hidden"
 		hand.visible = false
-	_cooldowns = {"kodama": 20.0, "ishinage": 15.0, "kaichou": 20.0, "yukimoguri": 8.0, "onibi": 10.0, "shadow": 15.0, "hand": 10.0}
+	for wanderer in wanderers:
+		wanderer.vanish()
 
 
 func _physics_process(delta: float) -> void:
@@ -107,6 +132,26 @@ func _physics_process(delta: float) -> void:
 	var biome := Biomes.at(player.global_position)
 	for key: String in _cooldowns:
 		_cooldowns[key] -= delta
+
+	# 化け物は、日が暮れてから夜明けまでしか出ない。夜が明けると、みんな消える
+	var out := day.monsters_out()
+	if out != _awake:
+		var first: bool = _awake == null
+		_awake = out
+		get_tree().call_group(&"night_monsters", "set_awake", out)
+		if not out:
+			_dismiss_all()
+		elif not first:
+			player.message.emit("日が暮れてきた。……何かの気配がする")
+	if not out:
+		return
+	# 山頂のたき火のまわりは、一息つける場所：化け物は出ず、出ていたものは去る
+	var resting := _near_campfire(player.global_position)
+	if resting and not _was_resting:
+		_dismiss_all()
+	_was_resting = resting
+	if resting:
+		return
 
 	# のぞき：樹海と岩場で、新しい崖を登り始めたときに、ときどき崖の上に現れる
 	_peeker_cooldown -= delta
@@ -129,14 +174,14 @@ func _physics_process(delta: float) -> void:
 
 	# 雪潜り：雪山にいる間、雪の下からつけ狙う
 	if biome == Biomes.Id.SNOW:
-		if not yukimoguri.is_active() and _ready_for("yukimoguri"):
+		if not yukimoguri.is_active() and _ready_for("yukimoguri", 40.0):
 			yukimoguri.start_hunt(player, terrain)
 	elif yukimoguri.is_active():
 		yukimoguri.stop()
 
 	# 怪鳥：岩場と雪山の空に現れる
 	if biome == Biomes.Id.CRAG or biome == Biomes.Id.SNOW:
-		if not kaichou.is_active() and _ready_for("kaichou", 60.0):
+		if not kaichou.is_active() and _ready_for("kaichou", 180.0):
 			kaichou.arrive(player)
 	elif kaichou.is_active():
 		kaichou.leave()
@@ -146,17 +191,31 @@ func _physics_process(delta: float) -> void:
 	if _check > 0.0:
 		return
 	_check = 2.0
-	if biome == Biomes.Id.FOREST and _ready_for("kodama", 70.0) and randf() < 0.35:
+	if biome == Biomes.Id.FOREST and _ready_for("kodama", 240.0) and randf() < 0.2:
 		spawn_kodama()
-	if biome == Biomes.Id.CRAG and climbing and not ishinage.active and _ready_for("ishinage", 30.0) and randf() < 0.4:
+	if biome == Biomes.Id.CRAG and climbing and not ishinage.active and _ready_for("ishinage", 90.0) and randf() < 0.25:
 		spawn_ishinage()
 	var hand_zone := biome == Biomes.Id.SUMMIT or (biome == Biomes.Id.CRAG and day.is_night)
-	if hand_zone and climbing and _ready_for("hand", 18.0) and randf() < 0.4:
+	if hand_zone and climbing and _ready_for("hand", 60.0) and randf() < 0.25:
 		spawn_wall_hand()
-	if biome == Biomes.Id.SUMMIT and not shadow.active and _ready_for("shadow", 50.0) and randf() < 0.3:
+	if biome == Biomes.Id.SUMMIT and not shadow.active and _ready_for("shadow", 90.0) and randf() < 0.3:
 		spawn_shadow()
-	if (day.is_night or biome == Biomes.Id.SUMMIT) and _ready_for("onibi", 25.0):
-		spawn_onibi(ONIBI_COUNT if day.is_night else 2)
+	# 彷徨う亡者：夕暮れはひとり、真っ暗になると三人まで、まわりをさまよう
+	var roaming := wanderers.filter(func(w: Wanderer) -> bool: return w.active).size()
+	if roaming < (WANDERER_COUNT if day.is_night else 1) and _ready_for("wanderer", 35.0 if day.is_night else 60.0):
+		spawn_wanderer()
+	if _ready_for("onibi", 150.0) and randf() < 0.5:
+		spawn_onibi(ONIBI_COUNT if day.is_night or biome == Biomes.Id.SUMMIT else 1)
+
+
+## たき火（山頂の休み場）の近くか
+func _near_campfire(pos: Vector3) -> bool:
+	if features == null:
+		return false
+	for campfire in features.campfires:
+		if campfire.global_position.distance_to(pos) < Campfire.REST_RADIUS:
+			return true
+	return false
 
 
 ## 出せる時間になっていれば true を返し、次に出せるまでの時間を決める
@@ -249,9 +308,14 @@ func spawn_wall_hand() -> bool:
 		var normal := player.wall_normal()
 		var up := (Vector3.UP - normal * normal.y).normalized()
 		var right := (-normal).cross(up).normalized()
-		var from := player.global_position - up * 0.6 + right * randf_range(-0.5, 0.5) + normal * 0.8
-		var query := PhysicsRayQueryParameters3D.create(from, from - normal * 2.5, Player.TERRAIN_LAYER)
-		var hit := player.get_world_3d().direct_space_state.intersect_ray(query)
+		# 足元の岩肌を探す（丸く出っ張った岩でも見つかるように、高さと向きを変えて）
+		var hit := {}
+		for offset: float in [-0.6, -0.3, 0.0]:
+			var from := player.global_position + up * offset + right * randf_range(-0.4, 0.4) + normal * 0.8
+			var query := PhysicsRayQueryParameters3D.create(from, from - normal * 4.0, Player.TERRAIN_LAYER)
+			hit = player.get_world_3d().direct_space_state.intersect_ray(query)
+			if not hit.is_empty():
+				break
 		if hit.is_empty():
 			return false
 		hand.emerge(hit.position, normal, player)
@@ -270,6 +334,28 @@ func spawn_shadow() -> bool:
 		if not shadow.is_seen():
 			return true
 	shadow.vanish()
+	return false
+
+
+## 彷徨う亡者を、プレイヤーから少し離れた所（見えていない方向）に出す
+func spawn_wanderer() -> bool:
+	for wanderer in wanderers:
+		if wanderer.active:
+			continue
+		var camera := player.get_camera()
+		var forward := -camera.global_transform.basis.z
+		for attempt in 10:
+			var angle := randf() * TAU
+			var offset := Vector3(cos(angle), 0.0, sin(angle)) * randf_range(28.0, 55.0)
+			if forward.dot(offset.normalized()) > 0.5:
+				continue  # 目の前には、いきなり現れない
+			var p := player.global_position + offset
+			p.y = terrain.height_at(p.x, p.z)
+			if absf(p.y - player.global_position.y) > 40.0 or Ward.blocks(get_tree(), p):
+				continue
+			wanderer.appear(p, player, terrain)
+			return true
+		return false
 	return false
 
 

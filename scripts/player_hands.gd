@@ -19,6 +19,9 @@ const HANDS_LAYER := 2  # ヘッドライトでは照らさず、専用の弱い
 const REST_POSE := Vector3(0.28, -0.55, -0.3)    # 下ろしている（画面の外）
 const MANTLE_POSE := Vector3(0.24, -0.38, -0.42) # 崖の上に手をついて乗り上がる
 const FLAIL_POSE := Vector3(0.32, 0.02, -0.38)   # 落ちながらもがく
+const REACH_POSE := Vector3(0.12, -0.5, -0.75)   # 崖の下へ手を差し伸べる（右手だけ）
+const GUARD_POSE := Vector3(0.2, -0.3, -0.35)    # 殴るときの構え
+const PUNCH_POSE := Vector3(0.06, -0.14, -0.8)   # 拳を突き出したところ
 const SHOULDER := Vector3(0.26, -0.45, 0.1)
 
 
@@ -45,6 +48,9 @@ var _noise := FastNoiseLite.new()
 func _ready() -> void:
 	_player = get_parent() as Player
 	_camera = _player.get_node("Head/Camera3D") as Camera3D
+	if not _player.controlled:
+		visible = false  # 一人称の手は、自分で動かしているプレイヤーにだけ見せる
+		set_process(false)
 	_mitten_material = _material(Color.WHITE)
 	_sleeve_material = _material(Color.WHITE)
 	var glove := _mitten_material
@@ -118,7 +124,14 @@ func _update_climbing(delta: float) -> void:
 
 func _pose_target(hand: Hand) -> Vector3:
 	var pose := REST_POSE
-	if _player.state == Player.State.MANTLE:
+	if _player.punch_t >= 0.0 and _player.holding_kind() < 0:
+		# 殴る：両手を構え、殴る手だけを前へ突き出して戻す
+		pose = GUARD_POSE
+		if hand.side == _player.punch_side:
+			pose = GUARD_POSE.lerp(PUNCH_POSE, sin(PI * clampf(_player.punch_t, 0.0, 1.0)))
+	elif _player.reaching and hand.side > 0.0:
+		pose = REACH_POSE
+	elif _player.state == Player.State.MANTLE:
 		pose = MANTLE_POSE
 	elif not _player.is_on_floor() and _player.velocity.y < -7.0:
 		pose = FLAIL_POSE + Vector3(0.0, sin(_time * 22.0 + hand.side) * 0.08, 0.0)

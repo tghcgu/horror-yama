@@ -1,16 +1,22 @@
 class_name Onibi
 extends Node3D
-## 夜の山と霊峰にただよう青い火の玉「鬼火」。ゆらゆらと寄ってきて、触れると体の芯まで冷える。
-## お札や発煙筒の円には入れない。塩をまけば消える。
+## 夜の山と霊峰にただよう青い火の玉「鬼火」。現れた場所のあたりを、ゆらゆらとただよう。
+## 近づくと少しずつ寄ってきて、触れると体の芯まで冷える（しつこく追いかけてはこない）。しばらくすると消える。
+## ナタや拳で払うと、ふっと消える。お札や発煙筒の円には入れない。塩をまけば消える。
 
-const SPEED := 1.4
-const TOUCH_DISTANCE := 1.0
-const CHILL := 12.0
+const SPEED := 0.8          # 近くにいるときに寄ってくる速さ（歩けば振り切れる）
+const NOTICE := 6.0         # これより近いと、寄ってくる
+const WANDER := 6.0         # 現れた場所から、これくらいの範囲をただよう
+const TOUCH_DISTANCE := 0.9
+const CHILL := 10.0
+const LIFETIME := 40.0
 
 var player: Player
 var active := false
 
 var _time := randf() * 10.0
+var _home := Vector3.ZERO
+var _life := 0.0
 var _light: OmniLight3D
 var _hum: AudioStreamPlayer3D
 
@@ -57,8 +63,11 @@ func _ready() -> void:
 func appear(pos: Vector3, owner_player: Player) -> void:
 	player = owner_player
 	global_position = pos
+	_home = pos
+	_life = LIFETIME
 	active = true
 	visible = true
+	scale = Vector3.ONE
 	_hum.play()
 
 
@@ -72,14 +81,31 @@ func purify() -> void:
 	vanish()
 
 
+## 払われた（ときどき）・爆竹の音に驚いた：ふっと散って消える
+func scare(_from: Vector3) -> void:
+	if not active:
+		return
+	active = false
+	var tween := create_tween()
+	tween.tween_property(self, "scale", Vector3.ONE * 0.05, 0.25)
+	tween.tween_callback(vanish)
+
+
 func _physics_process(delta: float) -> void:
 	if not active or player == null:
 		return
 	_time += delta
+	_life -= delta
+	if _life <= 0.0:
+		scare(global_position)  # しばらくすると、ふっと消える
+		return
 	var target := player.global_position + Vector3.UP * 1.2
 	var to := target - global_position
-	var drift := Vector3(sin(_time * 1.3), sin(_time * 2.1) * 0.6, cos(_time * 1.1)) * 0.8
-	var next := global_position + (to.normalized() * SPEED + drift) * delta
+	# ふだんは現れた場所のまわりをただよい、近くにいるときだけ、ゆっくり寄ってくる
+	var wander := _home + Vector3(sin(_time * 0.37) * WANDER, sin(_time * 0.8) * 1.2, cos(_time * 0.29) * WANDER)
+	var goal := target if to.length() < NOTICE else wander
+	var drift := Vector3(sin(_time * 1.3), sin(_time * 2.1) * 0.6, cos(_time * 1.1)) * 0.5
+	var next := global_position + ((goal - global_position).limit_length(1.0) * SPEED + drift) * delta
 	if not Ward.blocks(get_tree(), next):
 		global_position = next
 	_light.light_energy = 1.2 + sin(_time * 7.0) * 0.3

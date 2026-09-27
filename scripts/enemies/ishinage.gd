@@ -36,7 +36,7 @@ func _ready() -> void:
 	add_child(model)
 	_poser = BonePoser.new(model.find_children("*", "Skeleton3D", true, false)[0] as Skeleton3D)
 	_grunt = AudioStreamPlayer3D.new()
-	_grunt.stream = Sfx.growl()
+	_grunt.stream = Sfx.grunt()
 	_grunt.unit_size = 8.0
 	_grunt.max_distance = 60.0
 	add_child(_grunt)

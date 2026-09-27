@@ -20,41 +20,66 @@ enum State { WALK, CLIMB, MANTLE }
 # --- 地上の移動 ---
 const WALK_SPEED := 4.5
 const SPRINT_SPEED := 7.0
-const JUMP_VELOCITY := 6.0
+const JUMP_VELOCITY := 7.2   # 約 1.4 m 跳べる（こぶや岩のすき間から抜け出せるように）
 const GRAVITY := 18.0
 const GROUND_ACCEL := 12.0
 const AIR_ACCEL := 2.5
 const MOUSE_SENSITIVITY := 0.0025
 
 # --- 滑り落ちる斜面（法線の上向き成分がこれより小さい床では、足をとられて滑る） ---
-const SLIP_NORMAL_Y := 0.87        # 約 30°
-const SLIP_NORMAL_Y_SNOW := 0.91   # 雪の上は約 24° から滑る
-const SLIP_NORMAL_Y_LOOSE := 0.98  # ガレ場や氷の上は、ほとんど平らでも滑る
+const SLIP_NORMAL_Y := 0.77        # 約 40°
+const SLIP_NORMAL_Y_SNOW := 0.85   # 雪の上は約 32° から滑る
+const SLIP_NORMAL_Y_LOOSE := 0.97  # ガレ場や氷の上は、ほとんど平らでも滑る
+const SLIP_DELAY := 0.25           # この時間、急な所に立ち続けたら滑り出す（細かいでこぼこでは滑らない）
+const SLIDE_FRICTION := 24.0       # 歩ける所に戻ったら、すぐに止まる
+const STEP_HEIGHT := 0.7           # この高さまでの段差は、歩いたまま乗り越える (m)
+const VAULT_HEIGHT := 1.9          # 段差に向かって跳ぶと、この高さまでの縁なら、手をかけて乗り越える (m)
+const STUCK_TIME := 0.45           # 進もうとしているのに、これだけ動けなければ、引っかかっている
+# 挟まって動けなくなったら、近くの空いた所へ抜け出す（岩のすき間に宙づり・張り出しの下で登れない・くぼみにはまった）
+const WEDGE_AIR_TIME := 0.5        # 宙に浮いたまま、落ちも進みもしない
+const WEDGE_CLIMB_TIME := 1.0      # 登ろうとしているのに、進まない
+const WEDGE_GROUND_TIME := 1.5     # 歩こうとしているのに、進まない（すべり落ちるくぼみから出られない、など）
 const SLIDE_ACCEL := 16.0
 const MAX_SLIDE_SPEED := 14.0
 const SLIDE_CONTROL := 0.25        # 滑っている間に、自分で動ける割合
 
 # --- クライミング ---
-const CLIMB_SPEED := 2.2
-const GRAB_REACH := 1.6
-const WALL_MAX_NORMAL_Y := 0.87  # 法線の上向き成分がこれより大きい面は「床」なので、つかめない（滑る斜面はつかめる）
+const CLIMB_SPEED := 2.7
+const GRAB_REACH := 2.0
+const SWING_REACH := 2.4        # ナタの届く距離（相手の体の表面まで, m）
+const SWING_DAMAGE := 34.0      # ナタの一振りの傷
+const SWING_INTERVAL := 0.42    # 左クリックを押しっぱなしで、振り続ける間隔 (s)
+const SWING_TIRED := 1.7        # へとへとのときは、振るのが遅くなる（間隔の倍率）
+const SWING_HIT_DELAY := 0.1    # 振り始めてから、刃が届くまで (s)
+const SWING_STAMINA := 3.0      # 一振りで使うスタミナ
+const HEAVY_EVERY := 3          # 続けて振ると、3 振りめごとに両手で振り下ろす重い一撃になる
+const HEAVY_DAMAGE := 1.7       # 重い一撃の傷の倍率
+const PUNCH_REACH := 1.4        # 素手で殴れる距離（相手の体の表面まで, m）
+const PUNCH_DAMAGE := 9.0
+const PUNCH_INTERVAL := 0.36
+const PUNCH_STAMINA := 1.5
+const WALL_MAX_NORMAL_Y := 0.8   # 法線の上向き成分がこれより大きい面は「床」なので、つかめない（歩けない斜面はつかめる）
 const WALL_GAP := 0.45           # 登っている間の、体の中心と壁の距離
-const LUNGE_SPEED := 7.0         # 登りながら Space で飛びつくときの速さ
+const LUNGE_SPEED := 8.5         # 登りながら Space で飛びつくときの速さ
 const LUNGE_TIME := 0.25
 const MANTLE_TIME := 0.3         # 崖の上に乗り上がる時間
 const GRAB_COOLDOWN := 0.3
 
 # --- スタミナ ---
 const MAX_STAMINA := 100.0
-const HANG_DRAIN := 5.0
-const CLIMB_DRAIN := 10.0
+const HANG_DRAIN := 4.0
+const CLIMB_DRAIN := 8.5
 const SPRINT_DRAIN := 12.0
-const LUNGE_COST := 25.0
+const LUNGE_COST := 20.0
 const REGEN_RATE := 25.0
 const REGEN_DELAY := 1.0
 const MIN_GRAB_STAMINA := 5.0
 const RECOVER_RATIO := 0.3  # 力尽きたあと、上限のこの割合まで回復すると再びつかめる
 const OVERHANG_DRAIN := 1.6  # オーバーハング（上から覆いかぶさる壁）では疲れやすい
+const BODY_RADIUS := 0.35
+const BODY_HEIGHT := 1.8
+const CLIMB_RADIUS := 0.2    # 登っている間は体を細くして、岩のでっぱりに引っかからないようにする
+const CLIMB_HEIGHT := 1.5
 const ROPE_DRAIN := 0.25
 const ICE_DRAIN := 2.5
 const ICE_SLIP := 0.7        # 氷の壁では、つかんでいてもずり落ちる (m/s)
@@ -69,10 +94,10 @@ const FIRE_WARM_UP_RATE := 10.0 # たき火のそばで温まる速さ（毎秒�
 const COLLAPSE_STAMINA := 5.0   # 上限がこれを下回ると倒れる
 const RESPAWN_HUNGER := 15.0    # たき火から再開するとき、空腹が増える量
 
-# --- 落下（少しの段差でもケガをし、10 m ほど落ちれば助からない） ---
-const SAFE_FALL_SPEED := 10.0
-const DEADLY_FALL_SPEED := 21.0
-const INJURY_PER_SPEED := 5.5
+# --- 落下（4 m くらいまでは平気。それより高いとケガをし、16 m ほど落ちれば助からない） ---
+const SAFE_FALL_SPEED := 12.5
+const DEADLY_FALL_SPEED := 24.0
+const INJURY_PER_SPEED := 3.5
 const MAX_INJURY := 70.0
 const KILL_Y := -30.0
 
@@ -82,7 +107,11 @@ const BANDAGE_HEAL := 35.0
 const ONIGIRI_STAMINA := 40.0
 const ONIGIRI_FILL := 35.0     # おにぎりで減る空腹
 const ONIGIRI_TIME := 15.0    # おにぎりの効果（疲れにくい）が続く秒数
-const THROW_SPEED := 9.0
+const THROW_SPEED := 9.0       # 火をつけて投げる物の速さ
+const THROW_MIN_SPEED := 5.0   # Q をちょんと押して投げたとき（ためはじめの強さが THROW_START_CHARGE）
+const THROW_MAX_SPEED := 19.0  # Q を長押しして、ためきってから投げたとき
+const THROW_START_CHARGE := 0.25
+const THROW_CHARGE_TIME := 0.9 # ためきるまでの時間 (s)
 const EAT_TIME := 2.5         # 缶詰を食べ終わるまで動けない秒数
 const AIM_DISTANCE := 2.6     # 拾う・調べるものに届く距離
 const AIM_COS := 0.94
@@ -91,11 +120,23 @@ const AIM_COS := 0.94
 const FLY_SPEED := 12.0
 const FLY_FAST_SPEED := 40.0
 
+# --- エモート（T を押している間に選ぶ動き） ---
+const EMOTES := ["wave", "cheer", "bow", "point", "sit", "dance", "shiver", "crouch"]
+const EMOTE_NAMES := ["手をふる", "ばんざい", "おじぎ", "ゆびさす", "すわる", "おどる", "ぶるぶる", "しゃがむ"]
+const EMOTE_TIMES := {"wave": 2.5, "cheer": 2.5, "bow": 2.0, "point": 2.5, "sit": -1.0, "dance": -1.0, "shiver": 3.0, "crouch": -1.0}
+
+# --- 手を差し伸べて、崖を登ってくる仲間を引き上げる（G を押している間） ---
+const REACH_RANGE := 1.7
+const PULL_TIME := 0.9
+const PULL_COST := 15.0
+const HEAD_HEIGHT := 1.42
+
 # --- 沼 ---
 const SINK_RATE := 0.22
 const SINK_DEADLY := 1.1
 
 const TERRAIN_LAYER := 1
+const BARRIER_LAYER := 32  # 見えない壁（山頂のたき火をともすまで、次の平地へ進めない）。ぶつかるが、つかんで登れはしない
 
 # --- カメラ ---
 const SPRINT_FOV_BONUS := 7.0
@@ -114,6 +155,22 @@ var exhausted := false
 var can_grab := false
 var frozen := false  # 死亡・捕獲の演出中は操作を止める
 var clipped := false  # ハーケンでぶら下がって休んでいる
+var _swing_cooldown := 0.0
+var _swing_hit_in := -1.0   # 刃が届くまでの時間（振っていなければ負）
+var _swing_side := 1.0      # 振る向き（右から・左から、交互に）
+var _swing_heavy := false
+var _swing_combo := 0       # 続けて振った回数
+var _swing_last := -10.0    # 最後に振った時刻 (s)
+var throw_charge := -1.0    # Q をためている強さ（0〜1）。ためていなければ負
+var last_struck: Node3D     # 最後に叩いた・投げ当てた相手（手なずけた犬が、いっしょに襲いかかる）
+var punch_t := -1.0         # 素手で殴っている途中（0〜1）。殴っていなければ負（一人称の手が読む）
+var punch_side := 1.0       # 殴る手（1 = 右手, -1 = 左手）
+var _strike_reach := SWING_REACH
+var _strike_damage := SWING_DAMAGE
+var _blocked_time := 0.0    # 進もうとしているのに、動けていない時間
+var _wedge_time := 0.0      # 挟まって動けていない時間
+var _wedge_anchor := Vector3.ZERO
+var stowed := false   # 手に持っていたアイテムを、しまっている（手ぶら）
 var sliding := false  # 急な斜面で足をとられている
 var climb_input := Vector2.ZERO  # 登っている間の入力（x: 右, y: 上）。手の動きに使う
 var inventory := Inventory.new()
@@ -126,7 +183,13 @@ var sink := 0.0                    # 沼に沈んだ深さ (m)
 var held_by: Node3D                # 化け物につかまれて、動けない
 var struggle := 0.0                # つかまれている間にもがいた量
 var climb_surface := ""            # いまつかんでいる面（"rock" / "rope" / "ice" / "crumbly"）
+var altitude_drain := 1.0          # 高い山ほど空気が薄く、登ると疲れやすい（Main がステージに合わせて決める）
 var flying := false                # テスト用の飛行モード
+var kill_height := KILL_Y          # これより下へ落ちたら助からない（地面を突き抜けたとき）
+var controlled := true             # キーボードとマウスで動かす（false なら bot_input で動く。仲間のダミーや、あとでネットの向こうの仲間）
+var bot_input := {}                # controlled でないときの入力（アクションの名前 → 押しているか）
+var emote := ""                    # いまのエモート（なければ ""）
+var reaching := false              # 手を差し伸べている
 
 # ギミックや化け物が、毎フレームかける影響（次のフレームの動きに使い、使ったら元に戻す）
 var zone_slow := 1.0          # 歩く速さの倍率
@@ -148,9 +211,16 @@ var _bob_time := 0.0
 var _time := 0.0
 var _shake_noise := FastNoiseLite.new()
 var _slide_velocity := Vector3.ZERO
+var _ground_normal := Vector3.UP  # 足元の傾き（細かいでこぼこを、ならして見る）
+var _slip_time := 0.0
 var _stuck_time := 0.0  # 罠に足を挟まれている
 var _eating := 0.0
 var _safe_landing := false
+var _emote_time := 0.0
+var _throw_time := 0.0
+var _pull_from := Vector3.ZERO
+var _pull_to := Vector3.ZERO
+var _pull_time := -1.0
 
 # 今のフレームで使う、ギミックの影響
 var _slow := 1.0
@@ -162,15 +232,27 @@ var _push := Vector3.ZERO
 
 @onready var _head: Node3D = $Head
 @onready var _camera: Camera3D = $Head/Camera3D
+## ヘッドライト。カメラとまったく同じ位置に置くと、Godot では光が描かれない（円錐の頂点がカメラと重なるため）。
+## なので、額の少し右上にずらしてある（player.tscn）
 @onready var _headlamp: SpotLight3D = $Head/Camera3D/Headlamp
 @onready var _hands: PlayerHands = $Hands
+var _held: HeldItem  # 手に持っているアイテムの見た目
 @onready var _sounds: PlayerSounds = $Sounds
+@onready var _body_shape: CollisionShape3D = $CollisionShape3D
+var _stuck_climb := 0.0  # 登ろうとしているのに動けていない時間
 
 
 func _ready() -> void:
 	add_to_group(&"players")
-	floor_max_angle = deg_to_rad(46.0)
+	_body_shape.shape = _body_shape.shape.duplicate()  # 体の形は、このプレイヤーだけのものにする（登るときに細くするため）
+	collision_mask |= BARRIER_LAYER
+	floor_max_angle = deg_to_rad(50.0)
+	floor_snap_length = 0.35  # でこぼこの下り坂でも、地面から浮かずに歩ける
 	_hands.gripped.connect(_on_hand_gripped)
+	if controlled:
+		_held = HeldItem.new()
+		_held.player = self
+		_camera.add_child(_held)
 	_camera.fov = Settings.fov
 
 
@@ -229,6 +311,9 @@ func spawn_at(pos: Vector3, yaw: float) -> void:
 	held_by = null
 	flying = false
 	_safe_landing = false
+	emote = ""
+	reaching = false
+	_pull_time = -1.0
 	_stuck_time = 0.0
 	_eating = 0.0
 	_slide_velocity = Vector3.ZERO
@@ -237,6 +322,15 @@ func spawn_at(pos: Vector3, yaw: float) -> void:
 	for kind: int in Items.STARTING:
 		inventory.add(kind)
 	items_changed.emit()
+
+
+## 霧に巻かれて、pos へ連れ戻される（体の具合も持ち物もそのまま）
+func return_to(pos: Vector3) -> void:
+	global_position = pos
+	velocity = Vector3.ZERO
+	_slide_velocity = Vector3.ZERO
+	state = State.WALK
+	_set_slim(false)
 
 
 ## たき火から再開する。ケガと寒さは治るが、空腹は増え、持ち物はそのまま
@@ -386,6 +480,11 @@ func use_selected() -> void:
 	use_slot(inventory.selected)
 
 
+## 投げた物が獣や化け物に当たった音
+func play_hit_sound() -> void:
+	_sounds.play_chop()
+
+
 ## その種類のアイテムを（どの欄にあっても）使う
 func use_item(kind: int) -> void:
 	var slot := inventory.slot_of(kind)
@@ -402,24 +501,31 @@ func use_slot(slot: int) -> void:
 		return
 	if result == 1:
 		inventory.remove_from(slot)
+	if _held:
+		_held.used()
 	items_changed.emit()
 	_sounds.play_item()
 
 
-## 選んでいるアイテムを、見ている方向へ投げる（そのまま転がる物として落ちる）
-func throw_selected() -> void:
+## 選んでいるアイテムを、見ている方向へ投げる（そのまま転がる物として落ちる）。
+## charge（0〜1）が大きいほど、強く遠くへ投げる。獣や化け物に当たると、アイテムの重さに応じた傷を負わせる
+func throw_selected(charge := THROW_START_CHARGE) -> void:
 	if frozen or held_by or inventory.selected_kind() < 0:
 		return
 	var kind := inventory.remove_from(inventory.selected)
-	_throw(kind, false)
+	_throw(kind, false, lerpf(THROW_MIN_SPEED, THROW_MAX_SPEED, clampf(charge, 0.0, 1.0)))
 	items_changed.emit()
 
 
-func _throw(kind: int, activated: bool) -> void:
+func _throw(kind: int, activated: bool, speed := THROW_SPEED) -> void:
+	_throw_time = 0.4
 	var forward := -_camera.global_transform.basis.z
 	var origin := _camera.global_position + forward * 0.5 - Vector3.UP * 0.15
-	item_thrown.emit(kind, origin, forward * THROW_SPEED + Vector3.UP * 2.0 + velocity * 0.5, activated)
-	_sounds.play_item()
+	var lift := lerpf(2.0, 1.0, clampf((speed - THROW_MIN_SPEED) / (THROW_MAX_SPEED - THROW_MIN_SPEED), 0.0, 1.0))
+	item_thrown.emit(kind, origin, forward * speed + Vector3.UP * lift + velocity * 0.5, activated)
+	if _held:
+		_held.used()
+	_sounds.play_swing(speed > 12.0)
 
 
 ## アイテムの効き目。0 = 使えなかった、1 = 使ってなくなった、2 = 使ったがなくならない
@@ -484,7 +590,137 @@ func _apply_item(kind: int) -> int:
 		Items.Kind.COMPASS:
 			effects["compass"] = 30.0
 			return 2
+		Items.Kind.NATA:
+			_swing()
+			return 0  # 振る動きと音は _swing が出す
+		Items.Kind.BERRIES:
+			_eat(10.0, 12.0)
+		Items.Kind.CHESTNUT:
+			_eat(20.0, 6.0)
+		Items.Kind.RAW_MEAT:
+			_eat(30.0, 10.0)
+			if randf() < 0.4:
+				effects["poison"] = 25.0
+				message.emit("生の肉で、腹をこわした")
+		Items.Kind.COOKED_MEAT:
+			_eat(45.0, 25.0)
+			boost_time = maxf(boost_time, ONIGIRI_TIME)
+		Items.Kind.PELT:
+			cold = 0.0
+			effects["warmer"] = 300.0
+			message.emit("毛皮を身にまとった")
+		Items.Kind.YAKI_ONIGIRI:
+			_eat(ONIGIRI_FILL * 1.3, ONIGIRI_STAMINA * 1.2)
+			boost_time = maxf(boost_time, ONIGIRI_TIME * 2.0)
+			cold = maxf(cold - 25.0, 0.0)
+		Items.Kind.GRILLED_MUSHROOM:
+			_eat(12.0, 10.0)
+			cold = 0.0
+			effects["warmer"] = 90.0
+			message.emit("体の芯から温まる")
+		Items.Kind.ROASTED_CHESTNUT:
+			_eat(35.0, 12.0)
+		Items.Kind.KUMANOI:
+			injury = 0.0
+			cold = 0.0
+			stamina = max_stamina()
+			exhausted = false
+			boost_time = maxf(boost_time, 120.0)
+			message.emit("熊の胆を飲んだ。体の奥から力がわいてくる")
 	return 1
+
+
+## ナタを振る（左クリックを押しっぱなしなら、振り続ける）。右から・左からと交互に振り、
+## 続けて振ると 3 振りめごとに、両手で振り下ろす重い一撃になる。刃は振り始めて少ししてから届く（_swing_strike）。
+## 一振りごとにスタミナを使い、へとへとになると振るのが遅くなる
+func _swing() -> bool:
+	if _swing_cooldown > 0.0 or state != State.WALK or frozen or held_by != null or _eating > 0.0 or emote != "":
+		return false
+	var now := Time.get_ticks_msec() / 1000.0
+	_swing_combo = _swing_combo + 1 if now - _swing_last < SWING_INTERVAL * SWING_TIRED + 0.35 else 1
+	_swing_last = now
+	_swing_heavy = _swing_combo % HEAVY_EVERY == 0
+	_swing_cooldown = SWING_INTERVAL * (SWING_TIRED if exhausted else 1.0) * (1.35 if _swing_heavy else 1.0)
+	_swing_side = -_swing_side
+	_swing_hit_in = SWING_HIT_DELAY * (1.6 if _swing_heavy else 1.0)
+	_strike_reach = SWING_REACH
+	_strike_damage = SWING_DAMAGE * (HEAVY_DAMAGE if _swing_heavy else 1.0)
+	_use_stamina(SWING_STAMINA * (1.6 if _swing_heavy else 1.0))
+	if _held:
+		_held.swing(_swing_side, _swing_heavy, _swing_cooldown)
+	_sounds.play_swing(_swing_heavy)
+	return true
+
+
+## 素手で殴る（手ぶらで左クリック。つかめる壁があるときは、壁をつかむほう）。左右の拳で交互に殴る
+func _punch() -> bool:
+	if _swing_cooldown > 0.0 or state != State.WALK or frozen or held_by != null or _eating > 0.0 or emote != "":
+		return false
+	_swing_cooldown = PUNCH_INTERVAL * (SWING_TIRED if exhausted else 1.0)
+	_swing_heavy = false
+	_swing_hit_in = SWING_HIT_DELAY
+	_strike_reach = PUNCH_REACH
+	_strike_damage = PUNCH_DAMAGE
+	punch_side = -punch_side
+	punch_t = 0.0
+	_use_stamina(PUNCH_STAMINA)
+	_sounds.play_swing(false)
+	return true
+
+
+## 目の前（届く所）に、殴れる獣や化け物がいるか
+func _mob_in_reach(reach: float) -> bool:
+	var eye := _camera.global_position
+	var forward := -_camera.global_transform.basis.z
+	for group in [&"huntable", &"creatures"]:
+		for node: Node in get_tree().get_nodes_in_group(group):
+			var body := node as Node3D
+			if body == self or not Combat.can_strike(body):
+				continue
+			var to := Combat.body_center(body) - eye
+			if to.length() < reach + Combat.body_radius(body) and forward.dot(to.normalized()) > 0.4:
+				return true
+	return false
+
+
+## 刃（拳）が届いた：目の前の獣や化け物（体の大きさも考えて、いちばん正面の近いもの）に当てる。
+## 何もいなければ、岩や木に当たって火花が散る
+func _swing_strike() -> void:
+	var eye := _camera.global_position
+	var forward := -_camera.global_transform.basis.z
+	var target: Node3D = null
+	var best := INF
+	for group in [&"huntable", &"creatures"]:
+		for node: Node in get_tree().get_nodes_in_group(group):
+			var body := node as Node3D
+			if body == self or not Combat.can_strike(body):
+				continue
+			var radius := Combat.body_radius(body)
+			var to := Combat.body_center(body) - eye
+			var distance := to.length()
+			if distance > _strike_reach + radius or distance < 0.01:
+				continue
+			var facing := forward.dot(to / distance)
+			if facing < (0.1 if distance < radius + 0.9 else 0.5):
+				continue  # 体に触れるほど近ければ、少し横でも当たる
+			var score := distance - radius - facing
+			if score < best:
+				best = score
+				target = body
+	var damage := _strike_damage
+	if target:
+		var center := Combat.body_center(target)
+		var point := center + (eye - center).normalized() * minf(Combat.body_radius(target), center.distance_to(eye) * 0.5)
+		Combat.strike(target, damage, self, point)
+		last_struck = target
+		_sounds.play_chop()
+		add_shake(0.25 if _swing_heavy else 0.13)
+		return
+	var hit := _ray(eye, eye + forward * (_strike_reach + 0.2))
+	if not hit.is_empty() and _strike_reach >= SWING_REACH:
+		_sounds.play_ting()
+		add_shake(0.08)
+		Combat.spark(self, hit.position, Color(0.95, 0.85, 0.55), 8)
 
 
 func _eat(fill: float, energy: float) -> void:
@@ -534,8 +770,13 @@ func _hang_rope() -> bool:
 	var top := Vector3.ZERO
 	var outward := Vector3.ZERO
 	if state == State.CLIMB:
-		var reach := global_position + Vector3.UP * 1.8
-		var wall := _ray(reach, reach - _wall_normal * 1.5)
+		# 頭の上の岩肌を探す（丸く出っ張った岩でも見つかるように、高さを変えて、少し長めに）
+		var wall := {}
+		for height: float in [1.8, 1.4, 1.0]:
+			var reach := global_position + Vector3.UP * height + _wall_normal * 0.3
+			wall = _ray(reach, reach - _wall_normal * 2.5)
+			if not wall.is_empty():
+				break
 		if wall.is_empty():
 			return false
 		top = wall.position
@@ -562,10 +803,10 @@ func _hang_rope() -> bool:
 	if flat.length() < 0.2:
 		return false
 	flat = flat.normalized()
-	var below := _ray(top + flat * (Rope.GAP + 0.1), top + flat * (Rope.GAP + 0.1) - Vector3.UP * Rope.MAX_LENGTH)
-	var length := Rope.MAX_LENGTH if below.is_empty() else top.y - (below.position as Vector3).y
-	if length < 1.5:
-		return false
+	# 垂らす長さ：少し外側から真下を見て、下の地面までの高さ（斜めの岩肌でも、最低 4 m は垂らす）
+	var out := top + flat * 1.5
+	var below := _ray(out, out - Vector3.UP * Rope.MAX_LENGTH)
+	var length := Rope.MAX_LENGTH if below.is_empty() else maxf(top.y - (below.position as Vector3).y, 4.0)
 	rope_requested.emit(top, flat, length)
 	return true
 
@@ -577,7 +818,114 @@ func _add_injury(amount: float, show_hurt := true) -> void:
 		hurt.emit()
 
 
+## 入力（自分で動かすときはキーボードとマウス、そうでなければ bot_input）
+func _pressed(action: String) -> bool:
+	if not controlled:
+		return bool(bot_input.get(action, false))
+	if action == "grab" and holding_kind() < 0 and Input.is_action_pressed("use_item"):
+		return true  # 手ぶらなら、左クリックでもつかむ
+	return Input.is_action_pressed(action)
+
+
+func _just_pressed(action: String) -> bool:
+	if not controlled:
+		return false
+	if action == "grab" and holding_kind() < 0 and Input.is_action_just_pressed("use_item"):
+		return true
+	return Input.is_action_just_pressed(action)
+
+
+## 手に持っているアイテムの種類（しまっている・持っていないなら -1）
+func holding_kind() -> int:
+	return -1 if stowed else inventory.selected_kind()
+
+
+## 選んでいる欄のアイテムを、しまう／取り出す
+func toggle_stowed() -> void:
+	stowed = not stowed
+	items_changed.emit()
+
+
+func _vector(negative_x: String, positive_x: String, negative_y: String, positive_y: String) -> Vector2:
+	if controlled:
+		return Input.get_vector(negative_x, positive_x, negative_y, positive_y)
+	return Vector2.ZERO
+
+
+func is_eating() -> bool:
+	return _eating > 0.0
+
+
+## 投げてからの残り時間（体の投げる姿勢に使う）
+func throw_time() -> float:
+	return _throw_time
+
+
+func is_being_pulled() -> bool:
+	return _pull_time >= 0.0
+
+
+## エモートをする（地面に立っているときだけ）。動いたり跳んだりすると、やめる
+func play_emote(name: String) -> void:
+	if frozen or state != State.WALK or not is_on_floor() or not EMOTE_TIMES.has(name):
+		return
+	emote = name
+	_emote_time = EMOTE_TIMES[name]
+
+
+## 差し伸べた手の先（崖のふちの少し下）
+func reach_point() -> Vector3:
+	var forward := -global_transform.basis.z
+	forward.y = 0.0
+	return global_position + forward.normalized() * 1.0 - Vector3.UP * 0.6
+
+
+## 差し伸べた手の届く所を登っている仲間がいたら、自分の横まで引き上げる
+func _try_pull_up() -> void:
+	for node in get_tree().get_nodes_in_group(&"players"):
+		var other := node as Player
+		if other == null or other == self or other.state != State.CLIMB or other.is_being_pulled():
+			continue
+		var chest := other.global_position + Vector3.UP * 1.2
+		if chest.distance_to(reach_point()) > REACH_RANGE:
+			continue
+		var forward := -global_transform.basis.z
+		forward.y = 0.0
+		other.pull_up(global_position + global_transform.basis.x.normalized() * 0.8 + forward.normalized() * 0.1 + Vector3.UP * 0.2)
+		_use_stamina(PULL_COST)
+		add_shake(0.3)
+		message.emit("引き上げた")
+
+
+## 仲間に引き上げられる
+func pull_up(to: Vector3) -> void:
+	state = State.WALK
+	clipped = false
+	held_by = null
+	velocity = Vector3.ZERO
+	_pull_from = global_position
+	_pull_to = to
+	_pull_time = 0.0
+	_safe_landing = true
+
+
+func _process_pulled(delta: float) -> void:
+	_pull_time += delta
+	var t := clampf(_pull_time / PULL_TIME, 0.0, 1.0)
+	global_position = _pull_from.lerp(_pull_to, t * t * (3.0 - 2.0 * t)) + Vector3.UP * sin(t * PI) * 0.6
+	velocity = Vector3.ZERO
+	if t >= 1.0:
+		_pull_time = -1.0
+		_set_slim(false)
+		stamina = maxf(stamina, max_stamina() * 0.5)
+		_grab_cooldown = 1.5  # 引き上げられた直後に、また崖をつかんでぶら下がらないように
+		if not controlled:
+			bot_input.erase("grab")  # 仲間のダミーは、助けられたら手を離す
+
+
 func _unhandled_input(event: InputEvent) -> void:
+	if not controlled:
+		return
 	var motion := event as InputEventMouseMotion
 	if motion:
 		if Input.mouse_mode == Input.MOUSE_MODE_CAPTURED and not frozen:
@@ -593,6 +941,7 @@ func _unhandled_input(event: InputEvent) -> void:
 		return
 	if click and click.pressed and (click.button_index == MOUSE_BUTTON_WHEEL_UP or click.button_index == MOUSE_BUTTON_WHEEL_DOWN):
 		inventory.select_next(-1 if click.button_index == MOUSE_BUTTON_WHEEL_UP else 1)
+		stowed = false
 		items_changed.emit()
 		return
 	if event.is_action_pressed("fly"):
@@ -602,16 +951,58 @@ func _unhandled_input(event: InputEvent) -> void:
 	elif event.is_action_pressed("restart"):
 		restart_requested.emit()
 	elif event.is_action_pressed("use_item"):
-		use_selected()
+		if holding_kind() >= 0:
+			use_selected()
 	elif event.is_action_pressed("throw"):
-		throw_selected()
+		if not frozen and held_by == null and inventory.selected_kind() >= 0:
+			throw_charge = THROW_START_CHARGE  # 押している間、ためる（離すと投げる）
+	elif event.is_action_released("throw"):
+		if throw_charge >= 0.0:
+			var charge := throw_charge
+			throw_charge = -1.0
+			throw_selected(charge)
 	elif event.is_action_pressed("interact"):
 		interact()
 	else:
 		for i in Items.SLOTS:
 			if event.is_action_pressed("item_%d" % (i + 1)):
-				inventory.selected = i
-				items_changed.emit()
+				if inventory.selected == i:
+					toggle_stowed()  # 同じ欄をもう一度選ぶと、しまう／取り出す
+				else:
+					inventory.selected = i
+					stowed = false
+					items_changed.emit()
+
+
+## たき火で焼ける物：手に持っている物が焼けるならそれ、でなければ持ち物の中で最初に見つかった焼ける物（なければ -1）
+func cookable_kind() -> int:
+	var held := inventory.selected_kind()
+	if not stowed and Items.COOKED.has(held):
+		return held
+	for kind in inventory.kinds:
+		if Items.COOKED.has(kind):
+			return kind
+	return -1
+
+
+## たき火で、食べ物をひとつ焼く。焼いた物は持ち物に入る（いっぱいなら足もとに落ちる）。
+## 手に持って焼いた物は、焼けたあとも手に持っている
+func cook() -> bool:
+	var kind := cookable_kind()
+	if kind < 0:
+		return false
+	var slot := inventory.slot_of(kind)
+	var was_selected := slot == inventory.selected
+	inventory.remove_from(slot)
+	var cooked: int = Items.COOKED[kind]
+	if not inventory.add(cooked):
+		item_thrown.emit(cooked, global_position + Vector3.UP, Vector3.UP * 2.0, false)
+	elif was_selected and inventory.kinds[slot] != kind:
+		inventory.selected = inventory.slot_of(cooked)
+	message.emit("たき火で%sを焼いた。%sになった" % [Items.NAMES[kind], Items.NAMES[cooked]])
+	_sounds.play_item()
+	items_changed.emit()
+	return true
 
 
 ## 見ている物を拾う・調べる
@@ -654,14 +1045,14 @@ func set_flying(on: bool) -> void:
 
 
 func _process_fly(delta: float) -> void:
-	var input := Input.get_vector("move_left", "move_right", "move_forward", "move_back")
+	var input := _vector("move_left", "move_right", "move_forward", "move_back")
 	var view := _camera.global_transform.basis
 	var direction := view.x * input.x + view.z * input.y
-	if Input.is_action_pressed("jump"):
+	if _pressed("jump"):
 		direction += Vector3.UP
-	if Input.is_action_pressed("fly_down"):
+	if _pressed("fly_down"):
 		direction += Vector3.DOWN
-	var speed := FLY_FAST_SPEED if Input.is_action_pressed("sprint") else FLY_SPEED
+	var speed := FLY_FAST_SPEED if _pressed("sprint") else FLY_SPEED
 	velocity = direction.normalized() * speed if direction.length() > 0.01 else Vector3.ZERO
 	global_position += velocity * delta  # 当たり判定なしで動く
 	stamina = max_stamina()
@@ -674,6 +1065,8 @@ func _physics_process(delta: float) -> void:
 	_take_zones()
 	if flying:
 		_process_fly(delta)
+	elif is_being_pulled():
+		_process_pulled(delta)
 	elif held_by:
 		_process_held(delta)
 	elif not frozen:
@@ -685,10 +1078,85 @@ func _physics_process(delta: float) -> void:
 			State.MANTLE:
 				_process_mantle(delta)
 		_process_stamina(delta)
-		if global_position.y < KILL_Y:
+		_check_wedged(delta)
+		if global_position.y < kill_height:
 			die()
 	_update_aim()
 	_update_camera(delta)
+
+
+## 挟まって動けなくなっていないか見て、動けなければ、近くの空いた所へ抜け出す
+func _check_wedged(delta: float) -> void:
+	if not controlled or _stuck_time > 0.0 or _eating > 0.0 or clipped or reaching or emote != "":
+		_wedge_time = 0.0
+		_wedge_anchor = global_position
+		return
+	var moving_input := _vector("move_left", "move_right", "move_forward", "move_back") != Vector2.ZERO
+	var airborne := state == State.WALK and not is_on_floor() and velocity.y > -1.0
+	var limit := 0.0
+	var reach := 0.0  # どこまで上へ抜け出してよいか (m)
+	if airborne:
+		limit = WEDGE_AIR_TIME
+		reach = 2.6
+	elif state == State.CLIMB and climb_input != Vector2.ZERO and stamina > MIN_GRAB_STAMINA:
+		limit = WEDGE_CLIMB_TIME
+		reach = 2.0
+	elif state == State.WALK and moving_input and not _blocked_by_barrier():
+		limit = WEDGE_GROUND_TIME
+		reach = 1.2  # 地面では、少しだけ（崖を登らずにすませることはできない）
+	if limit <= 0.0 or global_position.distance_to(_wedge_anchor) > 0.3:
+		_wedge_time = 0.0
+		_wedge_anchor = global_position
+		return
+	_wedge_time += delta
+	if _wedge_time < limit:
+		return
+	_wedge_time = 0.0
+	var forward := -global_transform.basis.z
+	if state == State.CLIMB:
+		forward = _wall_normal  # 登っていて張り出しにつかえたら、少し外へ回りこむ
+	var spot := _free_spot_near(global_position, Vector3(forward.x, 0.0, forward.z).normalized(), reach)
+	if spot.is_finite():
+		global_position = spot
+		velocity = Vector3.ZERO
+		_slide_velocity = Vector3.ZERO
+		if state == State.CLIMB:
+			state = State.WALK  # つかみ直す（つかむボタンを押していれば、すぐまたつかむ）
+			_set_slim(false)
+	_wedge_anchor = global_position
+
+
+## いま、見えない壁（山頂のたき火をともすまで進めない壁）に押しつけられているか
+func _blocked_by_barrier() -> bool:
+	for i in get_slide_collision_count():
+		var collider := get_slide_collision(i).get_collider() as CollisionObject3D
+		if collider and collider.collision_layer & BARRIER_LAYER:
+			return true
+	return false
+
+
+## pos の近くで、体がすっぽり入る空いた場所（上と、進みたい向きを先に探す）。なければ Vector3.INF
+func _free_spot_near(pos: Vector3, prefer: Vector3, reach: float) -> Vector3:
+	var query := PhysicsShapeQueryParameters3D.new()
+	query.shape = _body_shape.shape
+	query.collision_mask = collision_mask
+	query.exclude = [get_rid()]
+	var space := get_world_3d().direct_space_state
+	var sides: Array[Vector3] = [Vector3.ZERO]
+	for r: float in [0.7, 1.4]:
+		if prefer != Vector3.ZERO:
+			sides.append(prefer * r)
+		for k in 8:
+			sides.append(Vector3(cos(k * TAU / 8.0), 0.0, sin(k * TAU / 8.0)) * r)
+	for up: float in [0.4, 0.8, 1.2, 1.8, 2.6]:
+		if up > reach:
+			break
+		for side in sides:
+			var candidate := pos + side + Vector3.UP * up
+			query.transform = Transform3D(Basis(), candidate + _body_shape.position)
+			if space.intersect_shape(query, 1).is_empty():
+				return candidate
+	return Vector3.INF
 
 
 ## ギミックが前のフレームにかけた影響を受け取り、次のフレームのために元に戻す
@@ -711,15 +1179,31 @@ func _take_zones() -> void:
 func _process_held(delta: float) -> void:
 	velocity = Vector3.ZERO
 	climb_input = Vector2.ZERO
-	if Input.is_action_just_pressed("jump") or Input.is_action_just_pressed("move_left") \
-			or Input.is_action_just_pressed("move_right") or Input.is_action_just_pressed("grab"):
+	if _just_pressed("jump") or _just_pressed("move_left") \
+			or _just_pressed("move_right") or _just_pressed("grab"):
 		struggle += 1.0
 		add_shake(0.25)
 	_process_afflictions(delta)
 
 
 func _process_walk(delta: float) -> void:
-	var input := Input.get_vector("move_left", "move_right", "move_forward", "move_back")
+	if (_body_shape.shape as CapsuleShape3D).radius != BODY_RADIUS:
+		_set_slim(false)  # 登るのをやめたら、体の太さを戻す
+	var input := _vector("move_left", "move_right", "move_forward", "move_back")
+	# 手を差し伸べる（G を押している間）：ひざをついて動かない
+	reaching = _pressed("reach") and is_on_floor() and _eating <= 0.0 and not sliding
+	if reaching:
+		emote = ""
+		input = Vector2.ZERO
+		_try_pull_up()
+	# エモートは、動いたり跳んだりするとやめる。時間の決まったものは、終わるとやめる
+	if emote != "":
+		if input != Vector2.ZERO or _just_pressed("jump") or _pressed("grab") or not is_on_floor():
+			emote = ""
+		elif _emote_time > 0.0:
+			_emote_time -= delta
+			if _emote_time <= 0.0:
+				emote = ""
 	if _stuck_time > 0.0 or _eating > 0.0:
 		input = Vector2.ZERO
 	var direction := global_transform.basis * Vector3(input.x, 0.0, input.y)
@@ -728,7 +1212,7 @@ func _process_walk(delta: float) -> void:
 
 	var on_floor := is_on_floor()
 	_update_slide(on_floor, delta)
-	var sprinting := on_floor and input.y < 0.0 and Input.is_action_pressed("sprint") and not exhausted and not sliding and not _bog
+	var sprinting := on_floor and input.y < 0.0 and _pressed("sprint") and not exhausted and not sliding and not _bog
 	_sprinting = sprinting
 	climb_input = Vector2.ZERO
 	var speed := (SPRINT_SPEED if sprinting else WALK_SPEED) * _slow * (SLIDE_CONTROL if sliding else 1.0)
@@ -740,7 +1224,7 @@ func _process_walk(delta: float) -> void:
 	velocity.z = lerpf(velocity.z, target.z, weight)
 	if not on_floor:
 		velocity.y -= GRAVITY * delta
-	elif Input.is_action_just_pressed("jump") and _stuck_time <= 0.0 and _eating <= 0.0 and not _bog:
+	elif _just_pressed("jump") and _stuck_time <= 0.0 and _eating <= 0.0 and not _bog:
 		velocity.y = JUMP_VELOCITY
 	elif sliding:
 		velocity.y = minf(velocity.y, _slide_velocity.y)
@@ -751,12 +1235,21 @@ func _process_walk(delta: float) -> void:
 	move_and_slide()
 	if is_on_floor() and not on_floor:
 		_on_landed(impact_speed)
+	if on_floor and is_on_wall() and direction != Vector3.ZERO and not sliding:
+		_try_step_up(direction)
+	# 進もうとしているのに動けない（こぶのすき間や岩の縁に引っかかった）：
+	# 跳んで縁にぶつかったときや、しばらく押し続けたときは、手をかけて乗り越える
+	var moving := Vector2(velocity.x, velocity.z).length()
+	_blocked_time = _blocked_time + delta if direction != Vector3.ZERO and moving < 0.6 and state == State.WALK else 0.0
+	if direction != Vector3.ZERO and (_pressed("jump") or _blocked_time > STUCK_TIME) 			and test_move(global_transform, direction * 0.3):  # 目の前に何かある（縁に乗りかけて、足もとが床に見えるときも）
+		if _try_vault(direction):
+			return
 
 	var hit := _grab_probe()
 	can_grab = not hit.is_empty() and not exhausted and stamina >= MIN_GRAB_STAMINA and _grab_cooldown <= 0.0 \
 		and _stuck_time <= 0.0 and _eating <= 0.0
-	if can_grab and Input.is_action_pressed("grab"):
-		_start_climb(hit.normal)
+	if can_grab and _pressed("grab"):
+		_start_climb(hit.normal, hit.position)
 
 
 ## 急な斜面では足をとられ、下り方向へどんどん速く滑っていく（アイゼンがあれば滑らない）
@@ -766,23 +1259,54 @@ func _update_slide(on_floor: bool, delta: float) -> void:
 		limit = SLIP_NORMAL_Y_LOOSE
 	if has_effect("crampons"):
 		limit = -1.0
+	# 足元の傾きは、踏んでいる三角形ひとつではなく、少しの間ならして見る（細かいでこぼこで滑らないように）
 	var floor_normal := get_floor_normal() if on_floor else Vector3.UP
-	sliding = on_floor and floor_normal.y < limit
+	_ground_normal = _ground_normal.slerp(floor_normal, 1.0 - exp(-8.0 * delta)).normalized()
+	var steep_here := on_floor and _ground_normal.y < limit
+	_slip_time = _slip_time + delta if steep_here else 0.0
+	sliding = steep_here and _slip_time >= SLIP_DELAY
 	if sliding:
-		var downhill := (Vector3.DOWN - floor_normal * floor_normal.dot(Vector3.DOWN)).normalized()
-		var steep := clampf((limit - floor_normal.y) / 0.12, 0.35, 1.0)
+		var downhill := (Vector3.DOWN - _ground_normal * _ground_normal.dot(Vector3.DOWN)).normalized()
+		var steep := clampf((limit - _ground_normal.y) / 0.12, 0.35, 1.0)
 		_slide_velocity = (_slide_velocity + downhill * SLIDE_ACCEL * steep * delta).limit_length(MAX_SLIDE_SPEED)
 		if _slide_velocity.length() > 3.0:
 			add_shake(0.08)
 	elif on_floor:
-		_slide_velocity = _slide_velocity.move_toward(Vector3.ZERO, 7.0 * delta)  # 勢いがついていると、ゆるい所でもすぐには止まれない
+		_slide_velocity = _slide_velocity.move_toward(Vector3.ZERO, SLIDE_FRICTION * delta)
 	else:
 		_slide_velocity = _slide_velocity.move_toward(Vector3.ZERO, 4.0 * delta)
 
 
+## 目の前の縁（VAULT_HEIGHT まで）に手をかけて、よじ上る。上に立てる所がなければ false
+func _try_vault(direction: Vector3) -> bool:
+	for step: float in [0.9, 1.3, VAULT_HEIGHT]:
+		var up := Vector3.UP * step
+		if test_move(global_transform, up):
+			return false  # 頭の上がふさがっている
+		if not test_move(global_transform.translated(up), direction * 0.5):
+			_wall_normal = -direction
+			_start_mantle()
+			_mantle_timer = MANTLE_TIME * clampf(step / 2.1, 0.45, 1.0)
+			_blocked_time = 0.0
+			return true
+	return false
+
+
+## 小さな段差（STEP_HEIGHT まで）は、歩いたまま乗り越える
+func _try_step_up(direction: Vector3) -> void:
+	var up := Vector3.UP * STEP_HEIGHT
+	if test_move(global_transform, up):
+		return  # 頭の上がふさがっている
+	var forward := direction * 0.35
+	if test_move(global_transform.translated(up), forward):
+		return  # 上がっても進めない（段差ではなく壁）
+	global_position += up + forward
+	apply_floor_snap()
+
+
 func _process_climb(delta: float) -> void:
 	can_grab = true
-	var input := Input.get_vector("move_left", "move_right", "move_back", "move_forward")
+	var input := _vector("move_left", "move_right", "move_back", "move_forward")
 	climb_input = input
 	_sprinting = false
 	sliding = false
@@ -791,17 +1315,20 @@ func _process_climb(delta: float) -> void:
 	# ハーケンでぶら下がっている間は、手を離しても落ちない。動くと外れる
 	if clipped:
 		velocity = Vector3.ZERO
-		if input != Vector2.ZERO or Input.is_action_just_pressed("jump"):
+		if input != Vector2.ZERO or _just_pressed("jump"):
 			clipped = false
 		else:
 			return
-	if not Input.is_action_pressed("grab") or exhausted:
+	if not _pressed("grab") or exhausted:
 		_let_go()
 		return
 
 	# 胸の前の壁を探し直して、壁の向きを更新する
 	var chest := global_position + Vector3.UP
-	var hit := _ray(chest, chest - _wall_normal * (WALL_GAP + 1.0))
+	var hit := _ray(chest, chest - _wall_normal * (WALL_GAP + 1.6))
+	if hit.is_empty():
+		# 丸いこぶや角で壁が途切れたら、回り込んだ先の面を探してつかみ続ける
+		hit = _wrap_probe(chest, input)
 	if hit.is_empty():
 		if input.y > 0.0:
 			_start_mantle()
@@ -823,7 +1350,7 @@ func _process_climb(delta: float) -> void:
 	if climb_surface == "ice" and not has_effect("crampons"):
 		move -= up * ICE_SLIP
 
-	if Input.is_action_just_pressed("jump") and stamina > 0.0:
+	if _just_pressed("jump") and stamina > 0.0:
 		_use_stamina(LUNGE_COST)
 		_lunge_timer = LUNGE_TIME
 		add_shake(0.3)
@@ -835,8 +1362,17 @@ func _process_climb(delta: float) -> void:
 	var gap := (chest - (hit.position as Vector3)).dot(normal)
 	move -= normal * clampf(gap - WALL_GAP, -0.5, 1.0) * 8.0
 	velocity = move
+	var before := global_position
 	move_and_slide()
-	var drain := (CLIMB_DRAIN if input != Vector2.ZERO else HANG_DRAIN) * _drain_multiplier() * surface_drain * _climb_drain
+	# 動こうとしているのに引っかかって進めないときは、壁から少し離して押し上げる
+	if input != Vector2.ZERO and global_position.distance_to(before) < CLIMB_SPEED * delta * 0.2:
+		_stuck_climb += delta
+		if _stuck_climb > 0.25:
+			global_position += _wall_normal * 0.12 + (up * input.y + right * input.x).normalized() * 0.1
+			_stuck_climb = 0.0
+	else:
+		_stuck_climb = 0.0
+	var drain := (CLIMB_DRAIN if input != Vector2.ZERO else HANG_DRAIN) * _drain_multiplier() * surface_drain * _climb_drain * altitude_drain
 	if _wall_normal.y < -0.15:
 		drain *= OVERHANG_DRAIN
 	_use_stamina(drain * delta)
@@ -853,6 +1389,32 @@ func _process_climb(delta: float) -> void:
 			return
 	if exhausted:
 		_let_go()
+
+
+## 目の前の壁が途切れたとき、斜め下・斜め上・進む方向の横へ回り込んだ面を探す。見つかれば、その面の向きに合わせる
+func _wrap_probe(chest: Vector3, input: Vector2) -> Dictionary:
+	var n := _wall_normal
+	var up := (Vector3.UP - n * n.y).normalized()
+	var right := (-n).cross(up).normalized()
+	# 進もうとしている向きを先に探す（何もしていなければ、同じ高さの横・上を先に。下は最後）
+	var directions: Array[Vector3] = [-n + up * 0.6, -n - up * 0.8]
+	if input.y < 0.0:
+		directions.reverse()
+	if input.x != 0.0:
+		directions.push_front(-n + right * signf(input.x) * 1.2)
+	for direction in directions:
+		var hit := _ray(chest + n * 0.2, chest + n * 0.2 + direction.normalized() * (WALL_GAP + 1.4))
+		if not hit.is_empty() and (hit.normal as Vector3).y <= WALL_MAX_NORMAL_Y:
+			_wall_normal = hit.normal
+			return hit
+	return {}
+
+
+## 体の太さを変える（登っている間は細く）
+func _set_slim(slim: bool) -> void:
+	var capsule := _body_shape.shape as CapsuleShape3D
+	capsule.radius = CLIMB_RADIUS if slim else BODY_RADIUS
+	capsule.height = CLIMB_HEIGHT if slim else BODY_HEIGHT
 
 
 ## つかんでいる面の種類を調べ、スタミナの減り方の倍率を返す。崩れる岩はここで傷んでいく
@@ -880,15 +1442,20 @@ func _process_mantle(delta: float) -> void:
 	move_and_slide()
 	if _mantle_timer <= 0.0:
 		state = State.WALK
+		_set_slim(false)
 		velocity = _mantle_dir * 2.0
 		_grab_cooldown = GRAB_COOLDOWN
 
 
-func _start_climb(normal: Vector3) -> void:
+## 壁をつかむ。point（つかんだ所）を渡すと、胸が壁から WALL_GAP の所まで体を寄せる
+func _start_climb(normal: Vector3, point := Vector3.INF) -> void:
 	state = State.CLIMB
+	_set_slim(true)
 	_wall_normal = normal
 	velocity = Vector3.ZERO
 	_lunge_timer = 0.0
+	if point.is_finite():
+		global_position = point + normal * WALL_GAP - Vector3.UP * 1.1
 
 
 func _start_mantle() -> void:
@@ -900,6 +1467,7 @@ func _start_mantle() -> void:
 
 func _let_go() -> void:
 	state = State.WALK
+	_set_slim(false)
 	clipped = false
 	velocity = _wall_normal * 0.5
 	_grab_cooldown = GRAB_COOLDOWN
@@ -934,6 +1502,27 @@ func _on_hand_gripped() -> void:
 
 func _process_stamina(delta: float) -> void:
 	_grab_cooldown = maxf(_grab_cooldown - delta, 0.0)
+	_swing_cooldown = maxf(_swing_cooldown - delta, 0.0)
+	if _swing_hit_in >= 0.0:
+		_swing_hit_in -= delta
+		if _swing_hit_in < 0.0:
+			_swing_strike()
+	if controlled and holding_kind() == Items.Kind.NATA and Input.is_action_pressed("use_item") \
+			and Input.mouse_mode == Input.MOUSE_MODE_CAPTURED:
+		_swing()  # 押しっぱなしで、振り続ける
+	# 手ぶらの左クリックは、つかめる壁があれば壁をつかみ、なければ殴る（押しっぱなしなら、相手がいる間だけ殴り続ける）
+	if controlled and holding_kind() < 0 and state == State.WALK and not can_grab and Input.mouse_mode == Input.MOUSE_MODE_CAPTURED:
+		if Input.is_action_just_pressed("use_item") or (Input.is_action_pressed("use_item") and _mob_in_reach(PUNCH_REACH + 0.4)):
+			_punch()
+	if punch_t >= 0.0:
+		punch_t += delta / 0.3
+		if punch_t >= 1.0:
+			punch_t = -1.0
+	if throw_charge >= 0.0:
+		if state != State.WALK or held_by or inventory.selected_kind() < 0:
+			throw_charge = -1.0  # 登り始めたり、つかまれたりしたら、ためるのをやめる
+		else:
+			throw_charge = minf(throw_charge + delta / THROW_CHARGE_TIME, 1.0)
 	_regen_wait = maxf(_regen_wait - delta, 0.0)
 	boost_time = maxf(boost_time - delta, 0.0)
 	_stuck_time = maxf(_stuck_time - delta, 0.0)
@@ -998,6 +1587,8 @@ func _drain_multiplier() -> float:
 
 
 func _use_stamina(amount: float) -> void:
+	if not controlled:
+		return  # 仲間のダミーは疲れない
 	stamina = maxf(stamina - amount, 0.0)
 	_regen_wait = REGEN_DELAY
 	if stamina <= 0.0:
@@ -1020,6 +1611,8 @@ func _update_aim() -> void:
 				continue
 			var facing := forward.dot(to / distance)
 			if facing > best:
+				if node.has_method("interact_hint") and String(node.call("interact_hint", self)).is_empty():
+					continue  # いまは何もできない物（焼く物がないときのたき火など）は、ねらわない
 				best = facing
 				aimed = node
 
@@ -1050,6 +1643,16 @@ func _update_camera(delta: float) -> void:
 		offset.x += sin(_time * 0.9) * 0.04
 	_camera.position = offset
 	_camera.rotation.z = roll
+	# すわる・しゃがむ・ひざをつくと、目の高さも下がる
+	var head_height := HEAD_HEIGHT
+	if emote == "sit":
+		head_height = 0.95
+	elif emote == "crouch":
+		head_height = 0.82
+	elif reaching:
+		head_height = 1.02
+	_head.position.y = lerpf(_head.position.y, head_height, 1.0 - exp(-10.0 * delta))
+	_throw_time = maxf(_throw_time - delta, 0.0)
 	var target_fov := Settings.fov + (SPRINT_FOV_BONUS if _sprinting else 0.0)
 	if has_effect("vision"):
 		target_fov += sin(_time * 2.0) * 12.0

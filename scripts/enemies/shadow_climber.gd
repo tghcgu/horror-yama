@@ -25,6 +25,8 @@ var _time := 0.0
 func _ready() -> void:
 	add_to_group(&"spirits")
 	var model := MODEL.instantiate() as Node3D
+	# いちばん基本の格好（ニット帽・ショート・ダウン・マフラー）で、顔は描かない
+	Appearance.apply_styles(model, {"hat": "beanie", "hair": "short", "top": "down", "neck": "scarf", "face": "none"})
 	var shadow := StandardMaterial3D.new()
 	shadow.albedo_color = Color(0.005, 0.005, 0.008)
 	shadow.roughness = 1.0
