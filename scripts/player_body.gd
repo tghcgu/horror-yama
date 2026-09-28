@@ -121,6 +121,8 @@ func _pose(delta: float) -> Dictionary:
 		return pose
 	if p.emote != "":
 		return _emote_pose(pose, p.emote, t)
+	if p.crouching:
+		return _emote_pose(pose, "crouch", t)
 	if p.is_eating():
 		# 缶詰を食べる：右手を口へ運び、もぐもぐ
 		_limbs(pose, 1, Vector3(1.2, 0.0, 0.1), Vector3(2.0 + sin(t * 8.0) * 0.2, 0.0, 0.0), Vector3.ZERO, Vector3(-0.1, 0.0, 0.0))

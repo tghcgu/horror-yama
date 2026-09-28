@@ -226,6 +226,54 @@ func _tame() -> void:
 	player.message.emit("野犬が、なついた")
 	_voice.pitch_scale = 1.2
 	_voice.play()
+	_add_collar()
+
+
+## 仲間になった印の、赤い首輪と金色の鈴（遠くからでも、野犬と見分けられる）
+func _add_collar() -> void:
+	var skeleton := _model.find_children("*", "Skeleton3D", true, false)[0] as Skeleton3D
+	var neck := skeleton.find_bone("neck")
+	if neck < 0 or _model.find_child("Collar", true, false) != null:
+		return
+	var head := skeleton.find_bone("head")
+	var length := skeleton.get_bone_rest(head).origin.length() if head >= 0 else 0.1
+	# 首の太さを、体の形から測る（首の骨に直角な面の上にある頂点の、骨からの遠さ）
+	var rest := skeleton.get_bone_global_rest(neck)
+	var axis := rest.basis.y.normalized()
+	var along_neck := length * 0.55
+	var center := rest.origin + axis * along_neck
+	var thickness := 0.04
+	for mesh_node: MeshInstance3D in skeleton.find_children("*", "MeshInstance3D", true, false):
+		var vertices: PackedVector3Array = mesh_node.mesh.surface_get_arrays(0)[Mesh.ARRAY_VERTEX]
+		for vertex in vertices:
+			var offset := vertex - center
+			var along := offset.dot(axis)
+			var across := (offset - axis * along).length()
+			if absf(along) < 0.015 and across < 0.2:
+				thickness = maxf(thickness, across)
+	var attach := BoneAttachment3D.new()
+	attach.name = "Collar"
+	attach.bone_idx = neck
+	skeleton.add_child(attach)
+	var ring := TorusMesh.new()
+	ring.inner_radius = thickness
+	ring.outer_radius = thickness + 0.024
+	ring.rings = 18
+	ring.ring_segments = 6
+	var band := MeshInstance3D.new()
+	band.mesh = ring
+	band.material_override = CreatureKit.flat(Color(0.78, 0.08, 0.06), 0.5)
+	band.position = Vector3(0.0, along_neck, 0.0)
+	band.scale = Vector3(1.0, 1.6, 1.0)  # 輪の幅を、首に沿って少し広く
+	attach.add_child(band)
+	# 鈴はのどの下に下げる（首の骨から見た「下」を、骨の向きに直角な面へ落とす）
+	var down := rest.basis.inverse() * Vector3.DOWN
+	down = (down - Vector3.UP * down.dot(Vector3.UP)).normalized()
+	var bell := MeshInstance3D.new()
+	bell.mesh = CreatureKit.sphere(0.024)
+	bell.material_override = CreatureKit.flat(Color(0.95, 0.75, 0.25), 0.3)
+	bell.position = band.position + down * (thickness + 0.03)
+	attach.add_child(bell)
 
 
 ## 倒した獣から、肉と毛皮をとる（持ちきれない分は、足もとに落ちる）。生きている野犬なら、食べ物をあげて手なずける

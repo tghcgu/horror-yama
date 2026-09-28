@@ -155,6 +155,15 @@ func _process(delta: float) -> void:
 	critters.guide_target = player.compass_target  # 白ぎつねが案内する先
 	# まだ行けないステージの霧：奥へ入りこもうとすると押し戻され、深く入りこむと、元の場所へ連れ戻される
 	_fog_warning -= delta
+	if run_state == RunState.CLIMBING and not player.flying and fog.behind_wall(pos) and _fog_safe.is_finite():
+		# 見えない壁の向こうへ抜けてしまった（どんな方法でも）：すぐに元の場所へ戻す
+		player.return_to(_fog_safe)
+		if fog.at_seal(pos):
+			hud.show_notice("来た道は、深い霧に閉ざされている。もう戻れない……")
+		else:
+			hud.show_notice("見えない何かにはばまれて、先へ進めない……山頂のたき火に火をともさないと")
+		_fog_warning = 6.0
+		return
 	var push := fog.push_back(pos) if not player.flying else Vector3.ZERO
 	var sea := _sea_push(pos)
 	if sea != Vector3.ZERO and run_state == RunState.CLIMBING:
@@ -292,8 +301,11 @@ func _sea_push(pos: Vector3) -> Vector3:
 	player.zone_slow = minf(player.zone_slow, 0.65)  # 水の中は、歩きにくい
 	if depth < 0.9:
 		return Vector3.ZERO
-	var start := MountainChain.plain_starts[0]
-	var inland := (MountainChain.plain_ends[0] - start).normalized()
+	var land := fog.nearest_open_point(pos) - Vector2(pos.x, pos.z)
+	if land.length() < 0.5:
+		var start := MountainChain.plain_starts[0]
+		land = MountainChain.plain_ends[0] - start
+	var inland := land.normalized()
 	return Vector3(inland.x, 0.0, inland.y) * clampf(2.5 + (depth - 0.9) * 2.5, 0.0, 8.0)
 
 

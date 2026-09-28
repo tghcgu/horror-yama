@@ -14,6 +14,7 @@ const TOP_MARGIN := 45.0   # 霧の上端：その先の山の頂上より、こ
 const PASS_MARGIN := 2.0   # 境目からこれだけ奥へ入ると、押し戻し始める (m)
 const LOST_DEPTH := 8.0    # これより奥へ入りこんだら、霧に巻かれて元の場所へ連れ戻される (m)
 const MARGIN := 35.0       # いま行けるステージ（平地と山）から、これだけ離れると霧になる (m)
+const COAST_EXTRA := 110.0 # 最初のステージ（樹海）のまわりは、さらにこれだけ離れて、海の上から霧になる（横の限界は海）(m)
 const LOST_OUTSIDE := 45.0 # まわりの霧に、これより深く入りこんだら、元の場所へ連れ戻される (m)
 const COVE_HALF_WIDTH := 140.0  # 砂浜のうしろの、霧でおおわない入り江の幅の半分 (m)
 const WALL_WIDTH := 1400.0 # 見えない壁の幅 (m)。まわりこめないように、左右へ大きく広げる
@@ -67,6 +68,7 @@ func setup() -> void:
 	_material.set_shader_parameter("stage_plains", plains)
 	_material.set_shader_parameter("stage_areas", areas)
 	_material.set_shader_parameter("boundary_margin", MARGIN)
+	_material.set_shader_parameter("first_extra", COAST_EXTRA)
 	var beach_start := MountainChain.plain_starts[0]
 	_material.set_shader_parameter("beach_origin", beach_start)
 	_material.set_shader_parameter("beach_direction", (MountainChain.plain_ends[0] - beach_start).normalized())
@@ -107,7 +109,7 @@ func _build_walls() -> void:
 ## 見えない壁の向こう側にいるか（飛ばされたりして入りこんだとき。壁に押しつけられたままにせず、元の場所へ戻す）
 func behind_wall(pos: Vector3) -> bool:
 	for k in range(1, MountainChain.COUNT):
-		if not _opened[k - 1] and MountainChain.past_gate(k, pos.x, pos.z) > PASS_MARGIN + 1.5:
+		if not _opened[k - 1] and MountainChain.past_gate(k, pos.x, pos.z) > PASS_MARGIN + 0.8:
 			return true
 	# 閉ざされた来た道の側
 	return _first_open > 0 and MountainChain.past_gate(_first_open, pos.x, pos.z) < PASS_MARGIN - 3.0
@@ -167,16 +169,17 @@ func _outside(pos: Vector3) -> Array:
 	var best := INF
 	var nearest := point
 	for i in range(_first_open, _open_count):
+		var extra := COAST_EXTRA if i == 0 else 0.0
 		var start := MountainChain.plain_starts[i]
 		var end := MountainChain.plain_ends[i]
 		var ab := end - start
 		var on_plain := start + ab * clampf((point - start).dot(ab) / ab.length_squared(), 0.0, 1.0)
-		var to_plain := point.distance_to(on_plain) - MountainChain.PLAIN_HALF_WIDTH
+		var to_plain := point.distance_to(on_plain) - MountainChain.PLAIN_HALF_WIDTH - extra
 		if to_plain < best:
 			best = to_plain
 			nearest = on_plain
 		var center := MountainChain.centers[i]
-		var to_mountain := point.distance_to(center) - MountainChain.radii[i] * MountainChain.SPREAD
+		var to_mountain := point.distance_to(center) - MountainChain.radii[i] * MountainChain.SPREAD - extra
 		if to_mountain < best:
 			best = to_mountain
 			nearest = center
@@ -196,6 +199,11 @@ func _outside(pos: Vector3) -> Array:
 			best = behind
 			nearest = MountainChain.gate_point(_first_open) + MountainChain.gate_direction(_first_open) * 10.0
 	return [best, nearest]
+
+
+## いま行けるステージ（平地と山）の、いちばん近い場所（海に入ったとき、陸へ押し戻す向き）
+func nearest_open_point(pos: Vector3) -> Vector2:
+	return _outside(pos)[1]
 
 
 ## まだ晴れていない霧の中へ、どれだけ入りこんでいるか (m)。霧の外なら 0 以下

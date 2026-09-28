@@ -22,7 +22,7 @@ func setup(top: Vector3, outward: Vector3, length: float) -> void:
 		var hit := space.intersect_ray(PhysicsRayQueryParameters3D.create(from, from - out * 5.0, Player.TERRAIN_LAYER))
 		if not hit.is_empty():
 			gap = maxf(gap, ((hit.position as Vector3) - top).dot(out) + WIDTH)
-	gap = minf(gap, 2.5)
+	gap = minf(gap, 5.0)  # 大きな丸い岩がふくらんでいても、その外に垂らす
 	global_transform = Transform3D(Basis.looking_at(-out, Vector3.UP), top + out * gap)
 	var box := BoxShape3D.new()
 	box.size = Vector3(WIDTH, length, WIDTH)

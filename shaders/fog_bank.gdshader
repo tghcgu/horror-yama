@@ -28,6 +28,7 @@ uniform vec4 stage_areas[4];
 uniform int open_stages = 1;
 uniform int first_stage = 0;  // これより前のステージは、霧に閉ざされた（来た道）
 uniform float boundary_margin = 35.0;  // 平地と山から、これだけ離れると霧になる (m)
+uniform float first_extra = 110.0;     // 最初のステージのまわりは、さらにこれだけ離れて（海の上から）霧になる (m)
 uniform float boundary_top = 400.0;    // まわりの霧の上端の高さ
 // 砂浜のうしろの入り江の海は、霧でおおわない（海岸線と海が見えるように。海は深くて戻れない）
 uniform vec2 beach_origin = vec2(0.0);
@@ -81,8 +82,9 @@ float open_distance(vec2 p) {
 		if (i < first_stage) {
 			continue;
 		}
-		float to_plain = segment_distance(p, stage_plains[i].xy, stage_plains[i].zw) - stage_areas[i].w;
-		float to_mountain = length(p - stage_areas[i].xy) - stage_areas[i].z;
+		float extra = i == 0 ? first_extra : 0.0;
+		float to_plain = segment_distance(p, stage_plains[i].xy, stage_plains[i].zw) - stage_areas[i].w - extra;
+		float to_mountain = length(p - stage_areas[i].xy) - stage_areas[i].z - extra;
 		best = min(best, min(to_plain, to_mountain));
 	}
 	vec2 from_start = p - beach_origin;

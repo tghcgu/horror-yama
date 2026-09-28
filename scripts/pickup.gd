@@ -15,12 +15,14 @@ const PURIFY_RADIUS := 9.0
 
 var kind := 0
 var lit := false
+var ground: Terrain   # 山の地面（地面を突き抜けたり、大岩に埋まったりしたら、上へ出す。訓練場では null）
 var thrower: Node3D   # 投げた人（当たった獣や化け物に、傷を負わせる）
 var _armed := false   # 投げたばかりで、まだ何にも当たっていない
 var radius := 0.0  # 燃えている発煙筒の守りの円（Ward.blocks が読む）
 
 var _time_left := 0.0
 var _landed := false
+var _unstick_timer := 0.0
 var _light: OmniLight3D
 var _sparks: CPUParticles3D
 var _sound: AudioStreamPlayer3D
@@ -45,7 +47,7 @@ func setup(item_kind: int, activated := false) -> void:
 	add_child(model)
 	var bounds := Items.model_bounds(model)
 	var box := BoxShape3D.new()
-	box.size = (bounds.size * VISUAL_SCALE).max(Vector3.ONE * 0.08)
+	box.size = (bounds.size * VISUAL_SCALE).max(Vector3.ONE * 0.14)  # 薄すぎると、回りながら地面を突き抜けやすい（ナタなど）
 	var collision := CollisionShape3D.new()
 	collision.shape = box
 	collision.position = bounds.get_center() * VISUAL_SCALE
@@ -88,6 +90,11 @@ func arm(by: Node3D) -> void:
 
 
 func _physics_process(delta: float) -> void:
+	if ground != null:
+		_unstick_timer -= delta
+		if _unstick_timer <= 0.0:
+			_unstick_timer = 0.25
+			_unstick()
 	if global_position.y < -60.0:
 		queue_free()
 		return
@@ -107,6 +114,22 @@ func _physics_process(delta: float) -> void:
 		Items.Kind.SALT:
 			if _landed or _time_left <= 0.0:
 				_purify()
+
+
+## 地面を突き抜けて下へ落ちてしまった、または大岩の中に埋まってしまった（細長い物が回りながらぶつかると、まれに起きる）：
+## 真上から見て、いちばん上の地面か岩の上へ出す（拾えなくならないように）
+func _unstick() -> void:
+	var pos := global_position
+	var surface := ground.height_at(pos.x, pos.z)
+	if pos.y > surface - 0.3 and not ground.inside_rock(pos):
+		return
+	var from := Vector3(pos.x, maxf(pos.y, surface) + 40.0, pos.z)
+	var query := PhysicsRayQueryParameters3D.create(from, Vector3(pos.x, surface - 1.0, pos.z), Player.TERRAIN_LAYER)
+	var hit := get_world_3d().direct_space_state.intersect_ray(query)
+	var top := (hit.position as Vector3).y if not hit.is_empty() else surface
+	global_position = Vector3(pos.x, top + 0.3, pos.z)
+	linear_velocity = Vector3.ZERO
+	angular_velocity = Vector3.ZERO
 
 
 ## 飛んでいる間、獣や化け物に当たったか調べる。当たったら、アイテムと速さに応じた傷を負わせて、はね返る

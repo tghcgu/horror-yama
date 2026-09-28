@@ -80,6 +80,9 @@ const BODY_RADIUS := 0.35
 const BODY_HEIGHT := 1.8
 const CLIMB_RADIUS := 0.2    # 登っている間は体を細くして、岩のでっぱりに引っかからないようにする
 const CLIMB_HEIGHT := 1.5
+const CROUCH_HEIGHT := 1.15   # しゃがんだときの体の高さ (m)。低い岩の下も、くぐり抜けられる
+const CROUCH_HEAD := 0.9      # しゃがんだときの目の高さ (m)
+const CROUCH_SPEED := 0.45    # しゃがんで歩く速さの倍率
 const ROPE_DRAIN := 0.25
 const ICE_DRAIN := 2.5
 const ICE_SLIP := 0.7        # 氷の壁では、つかんでいてもずり落ちる (m/s)
@@ -190,6 +193,7 @@ var controlled := true             # キーボードとマウスで動かす（f
 var bot_input := {}                # controlled でないときの入力（アクションの名前 → 押しているか）
 var emote := ""                    # いまのエモート（なければ ""）
 var reaching := false              # 手を差し伸べている
+var crouching := false             # しゃがんでいる（Ctrl / C を押している間）
 
 # ギミックや化け物が、毎フレームかける影響（次のフレームの動きに使い、使ったら元に戻す）
 var zone_slow := 1.0          # 歩く速さの倍率
@@ -1126,6 +1130,13 @@ func _check_wedged(delta: float) -> void:
 	_wedge_anchor = global_position
 
 
+## from から to までの間に、見えない壁（山頂のたき火をともすまで進めない壁）があるか
+func _barrier_between(from: Vector3, to: Vector3) -> bool:
+	var query := PhysicsRayQueryParameters3D.create(from, to, BARRIER_LAYER)
+	query.hit_from_inside = true
+	return not get_world_3d().direct_space_state.intersect_ray(query).is_empty()
+
+
 ## いま、見えない壁（山頂のたき火をともすまで進めない壁）に押しつけられているか
 func _blocked_by_barrier() -> bool:
 	for i in get_slide_collision_count():
@@ -1154,7 +1165,7 @@ func _free_spot_near(pos: Vector3, prefer: Vector3, reach: float) -> Vector3:
 		for side in sides:
 			var candidate := pos + side + Vector3.UP * up
 			query.transform = Transform3D(Basis(), candidate + _body_shape.position)
-			if space.intersect_shape(query, 1).is_empty():
+			if space.intersect_shape(query, 1).is_empty() and not _barrier_between(pos + Vector3.UP, candidate + Vector3.UP):
 				return candidate
 	return Vector3.INF
 
@@ -1187,8 +1198,8 @@ func _process_held(delta: float) -> void:
 
 
 func _process_walk(delta: float) -> void:
-	if (_body_shape.shape as CapsuleShape3D).radius != BODY_RADIUS:
-		_set_slim(false)  # 登るのをやめたら、体の太さを戻す
+	if absf((_body_shape.shape as CapsuleShape3D).radius - BODY_RADIUS) > 0.01:
+		_set_slim(false)  # 登るのをやめたら、体の太さを戻す（形の大きさは 32 ビットの小数なので、ぴったりは比べない）
 	var input := _vector("move_left", "move_right", "move_forward", "move_back")
 	# 手を差し伸べる（G を押している間）：ひざをついて動かない
 	reaching = _pressed("reach") and is_on_floor() and _eating <= 0.0 and not sliding
@@ -1212,10 +1223,13 @@ func _process_walk(delta: float) -> void:
 
 	var on_floor := is_on_floor()
 	_update_slide(on_floor, delta)
-	var sprinting := on_floor and input.y < 0.0 and _pressed("sprint") and not exhausted and not sliding and not _bog
+	_update_crouch()
+	var sprinting := on_floor and input.y < 0.0 and _pressed("sprint") and not exhausted and not sliding and not _bog and not crouching
 	_sprinting = sprinting
 	climb_input = Vector2.ZERO
 	var speed := (SPRINT_SPEED if sprinting else WALK_SPEED) * _slow * (SLIDE_CONTROL if sliding else 1.0)
+	if crouching:
+		speed *= CROUCH_SPEED
 	if _bog:
 		speed *= 0.35
 	var target := direction * speed + _slide_velocity + _push
@@ -1224,7 +1238,7 @@ func _process_walk(delta: float) -> void:
 	velocity.z = lerpf(velocity.z, target.z, weight)
 	if not on_floor:
 		velocity.y -= GRAVITY * delta
-	elif _just_pressed("jump") and _stuck_time <= 0.0 and _eating <= 0.0 and not _bog:
+	elif _just_pressed("jump") and _stuck_time <= 0.0 and _eating <= 0.0 and not _bog and not crouching:
 		velocity.y = JUMP_VELOCITY
 	elif sliding:
 		velocity.y = minf(velocity.y, _slide_velocity.y)
@@ -1368,7 +1382,9 @@ func _process_climb(delta: float) -> void:
 	if input != Vector2.ZERO and global_position.distance_to(before) < CLIMB_SPEED * delta * 0.2:
 		_stuck_climb += delta
 		if _stuck_climb > 0.25:
-			global_position += _wall_normal * 0.12 + (up * input.y + right * input.x).normalized() * 0.1
+			var nudge := _wall_normal * 0.12 + (up * input.y + right * input.x).normalized() * 0.1
+			if not _barrier_between(global_position + Vector3.UP, global_position + Vector3.UP + nudge.normalized() * (nudge.length() + BODY_RADIUS)):
+				global_position += nudge
 			_stuck_climb = 0.0
 	else:
 		_stuck_climb = 0.0
@@ -1415,6 +1431,33 @@ func _set_slim(slim: bool) -> void:
 	var capsule := _body_shape.shape as CapsuleShape3D
 	capsule.radius = CLIMB_RADIUS if slim else BODY_RADIUS
 	capsule.height = CLIMB_HEIGHT if slim else BODY_HEIGHT
+	_body_shape.position.y = BODY_HEIGHT * 0.5
+	crouching = false
+
+
+## しゃがむ（Ctrl / C を押している間）：目が低くなり、体も低くなって、低い岩の下をくぐれる。ゆっくりしか歩けず、跳べない。
+## 立ち上がるのは、頭の上に立てるだけのすき間があるときだけ（岩の下では、しゃがんだまま）
+func _update_crouch() -> void:
+	var want := _pressed("crouch") and not flying and emote == "" and not reaching
+	if want == crouching or (not want and not _room_to_stand()):
+		return
+	crouching = want
+	var height := CROUCH_HEIGHT if crouching else BODY_HEIGHT
+	(_body_shape.shape as CapsuleShape3D).height = height
+	_body_shape.position.y = height * 0.5  # 足もとの高さは変えない
+
+
+## 立ち上がれるだけのすき間が、頭の上にあるか
+func _room_to_stand() -> bool:
+	var standing := CapsuleShape3D.new()
+	standing.radius = BODY_RADIUS * 0.9
+	standing.height = BODY_HEIGHT - 0.1
+	var query := PhysicsShapeQueryParameters3D.new()
+	query.shape = standing
+	query.transform = Transform3D(Basis(), global_position + Vector3.UP * (BODY_HEIGHT * 0.5 + 0.05))
+	query.collision_mask = collision_mask
+	query.exclude = [get_rid()]
+	return get_world_3d().direct_space_state.intersect_shape(query, 1).is_empty()
 
 
 ## つかんでいる面の種類を調べ、スタミナの減り方の倍率を返す。崩れる岩はここで傷んでいく
@@ -1449,6 +1492,8 @@ func _process_mantle(delta: float) -> void:
 
 ## 壁をつかむ。point（つかんだ所）を渡すと、胸が壁から WALL_GAP の所まで体を寄せる
 func _start_climb(normal: Vector3, point := Vector3.INF) -> void:
+	if point.is_finite() and _barrier_between(global_position + Vector3.UP, point + normal * WALL_GAP):
+		return  # 見えない壁の向こうの壁には、手が届かない
 	state = State.CLIMB
 	_set_slim(true)
 	_wall_normal = normal
@@ -1651,6 +1696,8 @@ func _update_camera(delta: float) -> void:
 		head_height = 0.82
 	elif reaching:
 		head_height = 1.02
+	elif crouching:
+		head_height = CROUCH_HEAD
 	_head.position.y = lerpf(_head.position.y, head_height, 1.0 - exp(-10.0 * delta))
 	_throw_time = maxf(_throw_time - delta, 0.0)
 	var target_fov := Settings.fov + (SPRINT_FOV_BONUS if _sprinting else 0.0)

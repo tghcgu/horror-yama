@@ -17,6 +17,7 @@ const KEY_BINDINGS := {
 	"emote": KEY_T,
 	"reach": KEY_G,
 	"fly_down": KEY_CTRL,
+	"crouch": KEY_C,
 	"item_1": KEY_1,
 	"item_2": KEY_2,
 	"item_3": KEY_3,
@@ -45,6 +46,9 @@ func _enter_tree() -> void:
 		var event := InputEventKey.new()
 		event.physical_keycode = KEY_BINDINGS[action]
 		_add(action, event)
+	var ctrl := InputEventKey.new()  # しゃがむのは、Ctrl でも（空を飛んでいる間は、下へ降りる）
+	ctrl.physical_keycode = KEY_CTRL
+	_add("crouch", ctrl)
 
 	# 左クリック：手に持っているアイテムを使う（手ぶらなら、つかむ）。右クリック：いつでもつかむ
 	var click := InputEventMouseButton.new()

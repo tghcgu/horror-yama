@@ -23,9 +23,10 @@ const BLOB_SIZE := Vector2(7.0, 17.0)  # 丸い岩の突起の半径 (m)。高�
 const BIG := 10  # 巨大な岩の突起を、ふつうの大岩と別にまとめるための印
 const BLOB_NEAR := 200.0  # 巨大な岩を、これより遠くでは粗い形で描く (m)
 const PILLARS_PER_MOUNTAIN := [12, 14, 14, 16]  # 丸い岩を積み上げた柱
-const BOULDER_SPACING := 10.0  # 切り立った壁を、この間隔で巨大な丸い岩でおおう（壁の高さに合わせて、上下にも積む）(m)
-const BOULDER_SIZE := Vector2(6.0, 13.0)  # 壁をおおう丸い岩の半径 (m)。高い所ほど、さらに大きくする
-const BOULDER_MAX := 4000      # 山ひとつあたりの上限
+const BOULDER_SPACING := 10.0  # 切り立った壁や急な斜面を、この間隔で巨大な丸い岩でおおう（壁の高さに合わせて、上下にも積む）(m)
+const BOULDER_SIZE := Vector2(7.5, 14.5)  # 壁をおおう丸い岩の半径 (m)。高い所ほど、さらに大きくする
+const BOULDER_MAX := 9000      # 山ひとつあたりの上限（途中で打ち切って、山の一部だけ岩がないことにならないよう、大きめに）
+const GAP_SPACING := 5.0       # すき間うめ：この間隔で、まだ岩におおわれていない急な地面を探す (m)
 const ARCHES_PER_MOUNTAIN := [6, 7, 7, 8]       # 天然の岩のアーチ
 const HILLS := 30.0            # 地形のまわりのふもとの、大きな丘の高さ (m)
 const KNOBS := 1.2             # こぶの上にも平らな所を残さない、小さな丸いでこぼこ (m)
@@ -56,15 +57,19 @@ const SEA_LEVEL := -1.5        # 海面の高さ
 const SEA_FLOOR := -12.0       # 海の底
 const BEACH_BEGIN := 8.0       # 最初の平地の入り口から、これだけうしろから砂浜になる (m)
 const BEACH_SPAWN := 32.0      # スタート地点（墜落したヘリのそば）の、平地の入り口からのうしろへの距離 (m)
+const COAST := Vector2(30.0, 100.0)     # 横の海岸：最初のステージ（樹海）の広がりから、この距離で海へ下りきる (m)
+const COAST_LATER := Vector2(60.0, 200.0)  # 先のステージの広がりから、この距離で海へ下りきる（高い山すそは、海からそびえる）(m)
 const PIT_COUNT := 6           # 雪山の隠れクレバスの数
 const PIT_RADIUS := 2.2
 const PIT_DEPTH := 11.0
 const PIT_FIELD := 4.0         # 穴のまわりの、平らにならした雪原の幅 (m)。休めそうに見えて、実は罠
 const ROCK_CELL := 16.0        # 大岩を探しやすく分けておく区画の大きさ (m)
 const ROCK_BULGE := 1.12       # 岩の形のいびつさ（球の表面を、この倍率までふくらませる）
+const ROCK_NOTE_MARGIN := 3.0  # 岩のまわりの、これだけの近さまでは、岩の区画の中で調べられる (m)。これより大きい近さは調べない
 const CACHE_PATH := "user://terrain_%d.res"  # 作り終えた地形の保存先（山ごと）
 const COLLISION_CELL := 108.0    # 当たり判定を探しやすく分けておく区画 (m)
 const COLLISION_RADIUS := 110.0  # プレイヤーからこれより近い区画には、当たり判定を作っておく (m)
+const ROCK_COLLISION_CELL := 40.0  # 壁をおおう巨大な岩の当たり判定を、この大きさの区画ごとにまとめ、近づいたときに作る (m)
 const CACHE_SOURCES := ["res://scripts/terrain.gd", "res://scripts/mountain_chain.gd", "res://scripts/terrain_cache.gd"]
 
 
@@ -80,6 +85,7 @@ class TileJob:
 	var faces := PackedVector3Array()     # 当たり判定の三角形（作るまで覚えておく）
 	var area := Rect2()                   # 区画の広さ（x, z）
 	var has_collision := false
+	var parent: Node3D                    # 当たり判定の体を置く所（null なら地面。大岩なら、そのステージの岩のまとまり）
 
 
 ## 見た目と当たり判定をひとつにまとめる、いくつかの区画（GPU に作るメッシュの数を減らすため）
@@ -123,10 +129,12 @@ var _heights := PackedFloat32Array()  # 頂点ごとの高さ（細かく作っ�
 var _normals := PackedVector3Array()
 var _built := PackedByteArray()  # 頂点ごとに、細かく作ったか
 var _grid_ready := false  # 細かい地面を作り終えた（height_at は、作った地面の三角形から高さを読む）
+var _vertex_biomes := PackedByteArray()  # 頂点ごとの地帯（置き場所を探すときに、一度求めたら覚えておく。255 = まだ）
 var _material: ShaderMaterial
 var _body: StaticBody3D
 var _rock_groups: Array[Node3D] = []  # ステージごとの大岩（まだ作っていない・消したステージは null）
 var _rock_kit := {}                   # 岩の形と素材（_prepare_rocks）
+var _faces_cache := {}                # 岩の形 → その三角形（岩ごとに作り直すと遅い）
 var _collision_cells := {}            # 区画 → そこにかかるまとまり（当たり判定をまだ作っていないものを探す）
 var _waiting: Array[TileJob] = []     # 当たり判定をまだ作っていない区画
 var _stream_timer := 0.0
@@ -141,8 +149,10 @@ func build(seed_value: int) -> void:
 		child.queue_free()
 	_rock_groups.clear()
 	_rock_groups.resize(MountainChain.COUNT)
+	_faces_cache.clear()
 	_rock_cells.clear()
 	_grid_ready = false
+	_vertex_biomes = PackedByteArray()
 	MountainChain.generate(seed_value)
 	MountainChain.unlocked = MountainChain.COUNT
 	_outer = MountainChain.bounds()
@@ -161,6 +171,8 @@ func build(seed_value: int) -> void:
 	else:
 		_save_cache(path, version, _build_ground())
 	_grid_ready = true
+	_vertex_biomes.resize(_count_x * _count_z)
+	_vertex_biomes.fill(255)
 	ensure_collision(spawn_point(), COLLISION_RADIUS)
 	_prepare_rocks()
 	build_stage_rocks(0)  # ほかのステージの岩は、そのステージが現れるときに作る
@@ -185,7 +197,11 @@ func show_stage(stage: int) -> void:
 ## もう戻れないステージの大岩を消す（軽くするため）
 func unload_stage(stage: int) -> void:
 	if _rock_groups[stage] != null:
-		_rock_groups[stage].queue_free()
+		var group := _rock_groups[stage]
+		_waiting = _waiting.filter(func(job: TileJob) -> bool: return job.parent != group)
+		for key: Vector2i in _collision_cells:
+			_collision_cells[key] = (_collision_cells[key] as Array).filter(func(job: TileJob) -> bool: return job.parent != group)
+		group.queue_free()
 		_rock_groups[stage] = null
 
 
@@ -331,8 +347,15 @@ func _build_sea() -> void:
 
 
 ## 島の海岸：最初の平地のうしろは、ゆるやかに下る砂浜になり、波打ち際から先は海に沈む（海岸線は、うねらせる）。
+## 横も、最初のステージ（樹海）から離れた低地は海に沈み、先のステージの高い山は、海からそびえ立つ。
 ## 地形のふちへ行くほど、海に沈む（島のまわりは、ぐるりと海）
 func _apply_coast(x: float, z: float, h: float, wobble: float, edge: float) -> float:
+	var reach := MountainChain.core_distance(0, x, z) + wobble * 25.0
+	var reach_later := INF
+	for i in range(1, MountainChain.COUNT):
+		reach_later = minf(reach_later, MountainChain.core_distance(i, x, z))
+	reach_later += wobble * 25.0
+	h = lerpf(h, SEA_FLOOR, smoothstep(COAST.x, COAST.y, reach) * smoothstep(COAST_LATER.x, COAST_LATER.y, reach_later))
 	var start := MountainChain.plain_starts[0]
 	var toward := (MountainChain.plain_ends[0] - start).normalized()
 	var behind := -(Vector2(x, z) - start).dot(toward) + wobble * 14.0
@@ -517,14 +540,14 @@ func random_ledge_points(rng: RandomNumberGenerator, count: int, biome: int, spa
 		if _built[zi * _count_x + xi] == 0:
 			continue  # 細かく作っていない所（遠くの山すそ）
 		var p := _vertex(xi, zi)
-		if p.y < min_y or not _is_flat_area(xi, zi, flat_radius, min_normal_y):
-			continue
+		if p.y < min_y or p.y < SEA_LEVEL + 1.2 or not _is_flat_area(xi, zi, flat_radius, min_normal_y):
+			continue  # 低すぎる所（波打ち際）や、平らでない所には置かない
 		if biome > 0 and p.y < MountainChain.bases[biome] - 10.0:
 			continue  # 崖の下の谷底には置かない
-		if biome >= 0 and _biome_of(p) != biome:
-			continue
 		if _too_close(p, result, spacing) or _too_close(p, avoid, avoid_radius) or near_rock(p, 0.8) or is_beach(p.x, p.z):
 			continue
+		if biome >= 0 and _vertex_biome(xi, zi) != biome:
+			continue  # （地帯を求めるのは重いので、最後に調べる）
 		result.append(p)
 	return result
 
@@ -543,13 +566,23 @@ func random_wall_points(rng: RandomNumberGenerator, count: int, biome: int, spac
 			continue
 		var p := _vertex(xi, zi)
 		var normal := _normals[zi * _count_x + xi]
-		if p.y < 8.0 or normal.y > 0.35 or _biome_of(p) != biome or (biome > 0 and p.y < MountainChain.bases[biome] - 10.0):
+		if p.y < 8.0 or normal.y > 0.35 or (biome > 0 and p.y < MountainChain.bases[biome] - 10.0) or _vertex_biome(xi, zi) != biome:
 			continue
 		if _too_close(p, positions, spacing) or near_rock(p, 0.5):
 			continue
 		result.append([p, normal])
 		positions.append(p)
 	return result
+
+
+## 頂点の地帯（一度求めたら覚えておく）
+func _vertex_biome(xi: int, zi: int) -> int:
+	if _vertex_biomes.size() != _count_x * _count_z:
+		return _biome_of(_vertex(xi, zi))  # 地面を作っている最中（まだ覚えておく場所がない）
+	var index := zi * _count_x + xi
+	if _vertex_biomes[index] == 255:
+		_vertex_biomes[index] = _biome_of(_vertex(xi, zi))
+	return _vertex_biomes[index]
 
 
 ## すべてのステージがあるときの地帯（置き物の置き場所を決めるとき用）
@@ -1020,15 +1053,20 @@ func _add_group_nodes(group: GroupJob) -> void:
 	# 当たり判定は、区画ごとに、プレイヤーが近づいたときに作る（全部を一度に作ると、とても時間がかかる）
 	for job in group.tiles:
 		job.area = Rect2(_origin + Vector2(job.rect.position) * CELL, Vector2(job.rect.size - Vector2i.ONE) * CELL)
-		var c0 := Vector2i((job.area.position / COLLISION_CELL).floor())
-		var c1 := Vector2i((job.area.end / COLLISION_CELL).floor())
-		for cz in range(c0.y, c1.y + 1):
-			for cx in range(c0.x, c1.x + 1):
-				var key := Vector2i(cx, cz)
-				if not _collision_cells.has(key):
-					_collision_cells[key] = []
-				(_collision_cells[key] as Array).append(job)
-		_waiting.append(job)
+		_queue_collision(job)
+
+
+## 当たり判定をまだ作っていない区画として覚える（プレイヤーが近づいたら作る）
+func _queue_collision(job: TileJob) -> void:
+	var c0 := Vector2i((job.area.position / COLLISION_CELL).floor())
+	var c1 := Vector2i((job.area.end / COLLISION_CELL).floor())
+	for cz in range(c0.y, c1.y + 1):
+		for cx in range(c0.x, c1.x + 1):
+			var key := Vector2i(cx, cz)
+			if not _collision_cells.has(key):
+				_collision_cells[key] = []
+			(_collision_cells[key] as Array).append(job)
+	_waiting.append(job)
 
 
 ## 地面そのもの（大岩や置き物をのぞく）の当たり判定の体（区画ごとの体は、この子にある）
@@ -1041,6 +1079,9 @@ func _build_collision(job: TileJob) -> void:
 	if job.has_collision:
 		return
 	job.has_collision = true
+	if job.parent != null and not is_instance_valid(job.parent):
+		_waiting.erase(job)  # その大岩は、もう消えた
+		return
 	var shape := ConcavePolygonShape3D.new()
 	shape.set_faces(job.faces)
 	shape.backface_collision = true
@@ -1051,7 +1092,7 @@ func _build_collision(job: TileJob) -> void:
 	body.collision_layer = _body.collision_layer
 	body.collision_mask = _body.collision_mask
 	body.add_child(collision)
-	_body.add_child(body)
+	(job.parent if job.parent != null else _body).add_child(body)
 	job.faces = PackedVector3Array()
 	_waiting.erase(job)
 
@@ -1265,16 +1306,20 @@ func _prepare_rocks() -> void:
 		shapes.append(_rock_shape(rng))
 	var blobs: Array[ArrayMesh] = []
 	var blobs_far: Array[ArrayMesh] = []
+	var blobs_solid: Array[ArrayMesh] = []
 	for s in 6:
 		var lump_seed := rng.randi()
-		blobs.append(blob_shape(14, 9, lump_seed))
-		blobs_far.append(blob_shape(8, 5, lump_seed))
-	var chunks: Array[ArrayMesh] = []  # 壁をおおう岩は数が多いので、面を少なくした、ごつごつの塊
+		blobs.append(blob_shape(22, 13, lump_seed))  # 近くで見ても、輪郭が角ばらないように細かく
+		blobs_far.append(blob_shape(12, 7, lump_seed))
+		blobs_solid.append(blob_shape(14, 9, lump_seed))  # 当たり判定は、少し粗い形で（作るのが速い）
+	var chunks: Array[ArrayMesh] = []  # 壁をおおう丸い塊
+	var chunks_solid: Array[ArrayMesh] = []
 	var chunks_far: Array[ArrayMesh] = []
 	for s in 6:
 		var lump_seed := rng.randi()
-		chunks.append(blob_shape(10, 6, lump_seed))
-		chunks_far.append(blob_shape(6, 4, lump_seed))
+		chunks.append(blob_shape(18, 11, lump_seed))
+		chunks_far.append(blob_shape(10, 6, lump_seed))
+		chunks_solid.append(blob_shape(12, 8, lump_seed))
 	var arch := _arch_shape(rng)
 	# 地帯ごとの岩：樹海は苔むした黒い岩（上は苔）、岩場は花崗岩（上は砂ぼこり）、雪山は霜の岩（上は雪）、霊峰は玄武岩（上は灰）
 	var looks := [["rock_forest", "moss_top", 0.9], ["rock_crag", "dust_top", 0.45], ["rock_snow", "snow_top", 1.0], ["rock_summit", "ash_top", 0.5]]
@@ -1284,10 +1329,11 @@ func _prepare_rocks() -> void:
 		rock_material.set_shader_parameter("top_texture", Psx.texture(looks[biome][1]))
 		rock_material.set_shader_parameter("top_amount", looks[biome][2])
 		rock_material.set_shader_parameter("macro_variation", 0.3)
-		rock_material.set_shader_parameter("flat_shading", true)  # 面ごとに陰影をつけて、ごつごつした岩に見せる
+		rock_material.set_shader_parameter("flat_shading", false)  # なめらかに陰影をつけて、丸い岩に見せる
 		rock_material.set_shader_parameter("underside_dark", 0.62)  # 岩の下側は暗く（重なった岩のすき間が、深い影になる）
 		materials.append(rock_material)
-	_rock_kit = {"shapes": shapes, "blobs": blobs, "blobs_far": blobs_far, "chunks": chunks, "chunks_far": chunks_far, "arch": arch, "materials": materials}
+	_rock_kit = {"shapes": shapes, "blobs": blobs, "blobs_far": blobs_far, "blobs_solid": blobs_solid, "chunks": chunks, "chunks_far": chunks_far,
+		"chunks_solid": chunks_solid, "arch": arch, "materials": materials}
 
 
 ## ステージ i の岩を作る（そのステージが霧の中から現れるときに作る）。丸い岩の形を何種類か使い、山肌に向きも大きさも
@@ -1304,6 +1350,8 @@ func build_stage_rocks(i: int) -> void:
 	var blobs_far: Array = _rock_kit["blobs_far"]
 	var chunks: Array = _rock_kit["chunks"]
 	var chunks_far: Array = _rock_kit["chunks_far"]
+	var blobs_solid: Array = _rock_kit["blobs_solid"]
+	var chunks_solid: Array = _rock_kit["chunks_solid"]
 	var arch: ArrayMesh = _rock_kit["arch"]
 	var materials: Array = _rock_kit["materials"]
 	var tile_size := ROCK_TILE
@@ -1394,7 +1442,8 @@ func build_stage_rocks(i: int) -> void:
 		if normal.y < 0.55 and rng.randf() < 0.3:
 			center = ground + normal * r * 0.15 - Vector3.UP * r * 0.1  # 切り立った壁から、せり出したふくらみ（下はオーバーハング）
 		var pick := rng.randi() % blobs.size()
-		_add_big_rock(tools, body, blobs[pick], Transform3D(blob_basis * Basis.from_scale(size), center), size, ground, tile_size, true, blobs_far[pick] as ArrayMesh)
+		_add_big_rock(tools, body, blobs[pick], Transform3D(blob_basis * Basis.from_scale(size), center), size, ground, tile_size, true, blobs_far[pick] as ArrayMesh,
+			blobs_solid[pick] as ArrayMesh)
 	# 岩の柱：大小の丸い岩を積み上げた塔（よじ登って、てっぺんで休める）
 	for n in PILLARS_PER_MOUNTAIN[i]:
 		var angle := rng.randf() * TAU
@@ -1410,7 +1459,8 @@ func build_stage_rocks(i: int) -> void:
 		for level in rng.randi_range(3, 5):
 			var size := Vector3(rng.randf_range(0.9, 1.1), rng.randf_range(0.8, 1.0), rng.randf_range(0.9, 1.1)) * r * 2.0
 			var pick := rng.randi() % blobs.size()
-			_add_big_rock(tools, body, blobs[pick], Transform3D(Basis(Vector3.UP, rng.randf() * TAU) * Basis.from_scale(size), point), size, ground, tile_size, true, blobs_far[pick] as ArrayMesh)
+			_add_big_rock(tools, body, blobs[pick], Transform3D(Basis(Vector3.UP, rng.randf() * TAU) * Basis.from_scale(size), point), size, ground, tile_size, true, blobs_far[pick] as ArrayMesh,
+				blobs_solid[pick] as ArrayMesh)
 			point += Vector3(rng.randf_range(-0.3, 0.3) * r, r * rng.randf_range(1.2, 1.5), rng.randf_range(-0.3, 0.3) * r)
 			r *= rng.randf_range(0.7, 0.85)
 	# 岩のアーチ：山肌に、くぐったり乗り越えたりできる天然の岩橋
@@ -1459,8 +1509,11 @@ func build_stage_rocks(i: int) -> void:
 					high_h = qh
 					high = q
 			var rise := high_h - low_h
-			if rise < BOULDER_SPACING * 0.8 and (rise < BOULDER_SPACING * 0.5 or rng.randf() < 0.6):
-				continue  # 崖と急斜面だけ（少しゆるい斜面は、ときどき）
+			var on_mountain := (high_h - MountainChain.bases[i]) / height > 0.04
+			if on_mountain and rise < BOULDER_SPACING * 0.45:
+				continue  # 山は、崖と急な斜面をすべて（地面の平たい壁が見えないように）
+			if not on_mountain and rise < BOULDER_SPACING * 0.8 and (rise < BOULDER_SPACING * 0.5 or rng.randf() < 0.6):
+				continue  # 平地は、崖だけ（歩いて進む凸凹は、そのまま）
 			# 崖の高さに合わせて、下から上まで何段も積む
 			var layers := clampi(roundi(rise / (BOULDER_SPACING * 0.85)), 1, 16)
 			for layer in layers:
@@ -1495,18 +1548,43 @@ func build_stage_rocks(i: int) -> void:
 				var center := ground + normal * r * rng.randf_range(-0.05, 0.3)  # 半分以上を、壁から突き出す
 				var pick := rng.randi() % chunks.size()
 				_add_big_rock(tools, body, chunks[pick], Transform3D(boulder_basis * Basis.from_scale(size), center), size, ground, tile_size, true, chunks_far[pick],
-					chunks[pick], false, boulder_faces)  # 当たり判定は、見た目と同じ形で
+					chunks_solid[pick] as ArrayMesh, false, boulder_faces)  # 当たり判定は、同じ岩の少し粗い形で
 				boulders += 1
+	# すき間うめ：それでも岩におおわれずに見えている急な地面（平たい壁）にも、丸い岩を置く（山全体を、丸の集まりに見せる）
+	for gz in int(area.size.y / GAP_SPACING) + 1:
+		for gx in int(area.size.x / GAP_SPACING) + 1:
+			if boulders >= BOULDER_MAX:
+				break
+			var x := area.position.x + (gx + rng.randf_range(0.2, 0.8)) * GAP_SPACING
+			var z := area.position.y + (gz + rng.randf_range(0.2, 0.8)) * GAP_SPACING
+			var normal := normal_at(x, z)
+			if normal.y > 0.6:
+				continue  # 急ではない（歩ける地面は、そのまま）
+			var ground := Vector3(x, height_at(x, z), z)
+			if near_rock(ground, 0.6) or stage_of(ground) != i or _near_pit(x, z, 6.0) or ground.y < SEA_LEVEL + 1.0:
+				continue
+			var elevation := (ground.y - MountainChain.bases[i]) / height
+			if elevation < 0.04 or elevation > 0.95 or Vector2(x, z).distance_to(Vector2(spawn.x, spawn.z)) < 30.0:
+				continue  # 平地（歩いて進む所）と、頂上の平らな場所には置かない
+			var r := rng.randf_range(BOULDER_SIZE.x, BOULDER_SIZE.y) * 0.75
+			if Vector2(x, z).distance_to(c) < PLATEAU_RADIUS + r + 4.0 or near_landing(x, z, r * 0.9 - LANDING_BLEND):
+				continue
+			var size := Vector3(rng.randf_range(0.9, 1.15), rng.randf_range(0.8, 1.05), rng.randf_range(0.9, 1.15)) * r * 2.0
+			var gap_basis := Basis(Vector3.UP, rng.randf() * TAU) * Basis(Vector3.RIGHT, rng.randf_range(-0.25, 0.25))
+			var pick := rng.randi() % chunks.size()
+			_add_big_rock(tools, body, chunks[pick], Transform3D(gap_basis * Basis.from_scale(size), ground + normal * r * 0.2), size, ground, tile_size, true, chunks_far[pick],
+				chunks_solid[pick] as ArrayMesh, false, boulder_faces)
+			boulders += 1
+	# 当たり判定は、区画ごとにまとめておき、プレイヤーが近づいたときに作る（ステージを作るときに全部作ると、とても時間がかかる）
 	for key: Vector2i in boulder_faces:
-		var all_faces := PackedVector3Array()
+		var job := TileJob.new()
 		for part: PackedVector3Array in boulder_faces[key]:
-			all_faces.append_array(part)
-		var merged := ConcavePolygonShape3D.new()
-		merged.set_faces(all_faces)
-		merged.backface_collision = true
-		var merged_collision := CollisionShape3D.new()
-		merged_collision.shape = merged
-		body.add_child(merged_collision)
+			job.faces.append_array(part)
+		job.parent = group
+		job.area = Rect2(Vector2(key) * ROCK_COLLISION_CELL, Vector2.ONE * ROCK_COLLISION_CELL).grow(BOULDER_SIZE.y * 1.4)
+		_queue_collision(job)
+	if watch != null:
+		ensure_collision(watch.global_position, 30.0)
 	# 法線は、元の岩の形のものをそのまま使う（まとめてから作り直すと、とても時間がかかる）
 	for key: Vector3i in tools:
 		var tool: SurfaceTool = tools[key]
@@ -1546,10 +1624,13 @@ func _add_big_rock(tools: Dictionary, body: StaticBody3D, mesh: ArrayMesh, xform
 	if overhang and biome == Biomes.Id.SNOW and normal.y < 0.7:
 		var outward := Vector3(normal.x, 0.0, normal.z).normalized()
 		overhangs.append([xform.origin + outward * size.x * 0.4 - Vector3.UP * size.y * 0.25, biome])
-	var faces := xform * (collision_mesh if collision_mesh else mesh).get_faces()
+	var source := collision_mesh if collision_mesh else mesh
+	if not _faces_cache.has(source.get_instance_id()):
+		_faces_cache[source.get_instance_id()] = source.get_faces()
+	var faces: PackedVector3Array = xform * (_faces_cache[source.get_instance_id()] as PackedVector3Array)
 	if merge_into is Dictionary:
 		# 当たり判定は、区画ごとにまとめて、あとでひとつの形にする（merge_into: 区画 → 三角形の配列の配列）
-		var cell := Vector2i(floori(xform.origin.x / tile_size), floori(xform.origin.z / tile_size))
+		var cell := Vector2i(floori(xform.origin.x / ROCK_COLLISION_CELL), floori(xform.origin.z / ROCK_COLLISION_CELL))
 		# （配列は、あとでまとめてつなぐ。ここでつなぐと、増えた配列を毎回まるごと写すので、とても遅い）
 		if not merge_into.has(cell):
 			merge_into[cell] = []
@@ -1599,26 +1680,48 @@ func _arch_shape(rng: RandomNumberGenerator) -> ArrayMesh:
 
 ## 置いた大岩を覚えておく（形は、大きさ 1 の球を xform でのばしたもの）
 func _note_rock(xform: Transform3D, size: Vector3) -> void:
-	var key := Vector2i(floori(xform.origin.x / ROCK_CELL), floori(xform.origin.z / ROCK_CELL))
-	if not _rock_cells.has(key):
-		_rock_cells[key] = []
 	var radius := maxf(size.x, maxf(size.y, size.z)) * 0.5 * ROCK_BULGE
-	_rock_cells[key].append([xform.affine_inverse(), xform.origin, radius, minf(size.x, minf(size.y, size.z))])
+	var entry := [xform.affine_inverse(), xform.origin, radius, minf(size.x, minf(size.y, size.z))]
+	# 岩がかかる区画すべてに入れる（調べるときに、まわりの区画まで見なくてすむ）
+	var reach := radius + ROCK_NOTE_MARGIN
+	for cz in range(floori((xform.origin.z - reach) / ROCK_CELL), floori((xform.origin.z + reach) / ROCK_CELL) + 1):
+		for cx in range(floori((xform.origin.x - reach) / ROCK_CELL), floori((xform.origin.x + reach) / ROCK_CELL) + 1):
+			var key := Vector2i(cx, cz)
+			if not _rock_cells.has(key):
+				_rock_cells[key] = []
+			_rock_cells[key].append(entry)
 
 
 ## p が大岩の中か、岩の表面から margin 以内か（置き物や、テストで人を置く場所が、岩に埋まらないように）
 func near_rock(p: Vector3, margin := 0.5) -> bool:
-	var cx := floori(p.x / ROCK_CELL)
-	var cz := floori(p.z / ROCK_CELL)
-	for dz in range(-1, 2):
-		for dx in range(-1, 2):
-			for rock: Array in _rock_cells.get(Vector2i(cx + dx, cz + dz), []):
-				if p.distance_to(rock[1]) > rock[2] + margin:
-					continue
-				# 岩の形（のばした球）の中で、表面からの近さを大まかに比べる
-				var local := (rock[0] as Transform3D) * p
-				if local.length() < 0.5 * ROCK_BULGE + margin / (rock[3] as float):
-					return true
+	if margin > ROCK_NOTE_MARGIN:
+		# 遠くまで調べるときは、まわりの区画も見る
+		var extra := ceili((margin - ROCK_NOTE_MARGIN) / ROCK_CELL)
+		var seen := {}
+		for dz in range(-extra, extra + 1):
+			for dx in range(-extra, extra + 1):
+				for rock: Array in _rock_cells.get(Vector2i(floori(p.x / ROCK_CELL) + dx, floori(p.z / ROCK_CELL) + dz), []):
+					if seen.has(rock[1]):
+						continue
+					seen[rock[1]] = true
+					if p.distance_to(rock[1]) <= float(rock[2]) + margin and ((rock[0] as Transform3D) * p).length() < 0.5 * ROCK_BULGE + margin / (rock[3] as float):
+						return true
+		return false
+	for rock: Array in _rock_cells.get(Vector2i(floori(p.x / ROCK_CELL), floori(p.z / ROCK_CELL)), []):
+		if p.distance_squared_to(rock[1]) > (float(rock[2]) + margin) * (float(rock[2]) + margin):
+			continue
+		# 岩の形（のばした球）の中で、表面からの近さを大まかに比べる
+		var local := (rock[0] as Transform3D) * p
+		if local.length() < 0.5 * ROCK_BULGE + margin / (rock[3] as float):
+			return true
+	return false
+
+
+## p が大岩の奥深くに埋まっているか（表面のでこぼこでは、まちがえない深さ）
+func inside_rock(p: Vector3) -> bool:
+	for rock: Array in _rock_cells.get(Vector2i(floori(p.x / ROCK_CELL), floori(p.z / ROCK_CELL)), []):
+		if p.distance_to(rock[1]) < rock[2] and ((rock[0] as Transform3D) * p).length() < 0.3:
+			return true
 	return false
 
 
@@ -1633,25 +1736,14 @@ static func blob_shape(segments := 14, rings := 9, lump_seed := 0) -> ArrayMesh:
 	var data := sphere.get_mesh_arrays()
 	var points: PackedVector3Array = data[Mesh.ARRAY_VERTEX]
 	var indices: PackedInt32Array = data[Mesh.ARRAY_INDEX]
-	# ごつごつした塊にする：大きなうねりでゆがめ、いくつかの面で平らに削る（同じ lump_seed なら、面の数がちがっても同じ形）
+	# なめらかな丸い塊にする：ゆるやかな大きいうねりで、少しだけゆがめる（同じ lump_seed なら、面の数がちがっても同じ形）
 	var lumps := FastNoiseLite.new()
 	lumps.seed = lump_seed
-	lumps.frequency = 1.5
-	lumps.fractal_octaves = 2
-	var cut_rng := RandomNumberGenerator.new()
-	cut_rng.seed = lump_seed
-	var cuts := []
-	for k in cut_rng.randi_range(3, 5):
-		var n := Vector3(cut_rng.randf_range(-1.0, 1.0), cut_rng.randf_range(-1.0, 1.0), cut_rng.randf_range(-1.0, 1.0)).normalized()
-		cuts.append([n, cut_rng.randf_range(0.33, 0.43)])
+	lumps.frequency = 0.9
+	lumps.fractal_octaves = 1
 	for i in points.size():
 		var p := points[i]
-		p *= 1.0 + lumps.get_noise_3d(p.x, p.y, p.z) * 0.32
-		for cut: Array in cuts:
-			var over := p.dot(cut[0]) - float(cut[1])
-			if over > 0.0:
-				p -= (cut[0] as Vector3) * over
-		points[i] = p
+		points[i] = p * (1.0 + lumps.get_noise_3d(p.x, p.y, p.z) * 0.14)
 	var tool := SurfaceTool.new()
 	tool.begin(Mesh.PRIMITIVE_TRIANGLES)
 	for i in indices.size():
@@ -1666,18 +1758,19 @@ func _rock_shape(rng: RandomNumberGenerator) -> ArrayMesh:
 	var sphere := SphereMesh.new()
 	sphere.radius = 0.5
 	sphere.height = 1.0
-	sphere.radial_segments = 12
-	sphere.rings = 7
+	sphere.radial_segments = 14
+	sphere.rings = 8
 	var data := sphere.get_mesh_arrays()
 	var points: PackedVector3Array = data[Mesh.ARRAY_VERTEX]
 	var indices: PackedInt32Array = data[Mesh.ARRAY_INDEX]
-	# 同じ場所の頂点は同じだけ動かして、割れ目ができないようにする
-	var offsets := {}
+	# ゆるやかなうねりで、なめらかにゆがめる（同じ場所の頂点は同じだけ動くので、割れ目はできない）
+	var warp := FastNoiseLite.new()
+	warp.seed = rng.randi()
+	warp.frequency = 1.0
+	warp.fractal_octaves = 1
 	for i in points.size():
-		var key := points[i].snapped(Vector3.ONE * 0.001)
-		if not offsets.has(key):
-			offsets[key] = rng.randf_range(2.0 - ROCK_BULGE, ROCK_BULGE)
-		points[i] *= offsets[key]
+		var p := points[i]
+		points[i] = p * (1.0 + warp.get_noise_3d(p.x, p.y, p.z) * (ROCK_BULGE - 1.0) * 1.2)
 	var tool := SurfaceTool.new()
 	tool.begin(Mesh.PRIMITIVE_TRIANGLES)
 	for i in indices.size():

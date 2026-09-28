@@ -107,6 +107,8 @@ func _run() -> void:
 		await _test_census()
 	if _wants("menu"):
 		await _test_menu()
+	if _wants("gate_leak"):
+		await _test_gate_leak()
 	_finish()
 
 
@@ -216,6 +218,13 @@ func _test_combat() -> void:
 		if dog.tamed:
 			break
 	_check("a wild dog is tamed with food", dog.tamed, "state %s" % dog.state)
+	_check("the tamed dog wears a collar", dog.find_child("Collar", true, false) != null)
+	if _shot_dir != "":
+		var collar := dog.find_child("Collar", true, false) as Node3D
+		await _wait(0.2)
+		var look_at := collar.global_position if collar else dog.global_position + Vector3.UP * 0.5
+		var facing := dog.global_transform.basis.z
+		await _shot_from(look_at + dog.global_transform.basis.x * 0.9 - facing * 0.35 + Vector3.UP * 0.15, look_at, "dog_collar.png", true)
 	player.global_position += Vector3(8.0, 0.0, 0.0)
 	await _wait(2.0)
 	_check("the tamed dog follows you", dog.global_position.distance_to(player.global_position) < 8.0, "%.1f m" % dog.global_position.distance_to(player.global_position))
@@ -540,6 +549,50 @@ func _test_training(player: Player) -> void:
 	_check("raw meat is cooked at a lit fire and can be carried", player.inventory.count_of(Items.Kind.COOKED_MEAT) == 1 and player.inventory.count_of(Items.Kind.RAW_MEAT) == 0)
 	_check("other food can be cooked too", player.inventory.count_of(Items.Kind.GRILLED_MUSHROOM) == 1 and player.inventory.count_of(Items.Kind.MUSHROOM) == 0)
 	_check("boxes hold only man-made things", range(200).all(func(_i: int) -> bool: return not Items.pick_random(RandomNumberGenerator.new()) in Items.NOT_IN_BOXES))
+	# しゃがむと、低い天井の下をくぐれる。天井の下では、立ち上がらない
+	var ceiling := StaticBody3D.new()
+	ceiling.collision_layer = Player.TERRAIN_LAYER
+	var slab := CollisionShape3D.new()
+	var slab_shape := BoxShape3D.new()
+	slab_shape.size = Vector3(4.0, 0.4, 3.0)
+	slab.shape = slab_shape
+	ceiling.add_child(slab)
+	room.add_child(ceiling)
+	var crawl_from := room.to_global(Vector3(-10.0, 0.05, 30.0))
+	var crawl_ahead := room.global_transform.basis.x
+	ceiling.global_position = crawl_from + crawl_ahead * 3.5 + Vector3.UP * 1.5
+	player.spawn_at(crawl_from, room.rotation.y)
+	await _wait(0.3)
+	player.face_point(player.get_camera().global_position + crawl_ahead)
+	Input.action_press("move_forward")
+	var standing_under := false  # 立ったまま、天井の下を通れたか
+	for i in 25:
+		await _wait(0.1)
+		var along := (player.global_position - crawl_from).dot(crawl_ahead)
+		standing_under = standing_under or (absf(along - 3.5) < 1.0 and player.global_position.y < crawl_from.y + 0.5)
+	Input.action_release("move_forward")
+	player.spawn_at(crawl_from, room.rotation.y)
+	await _wait(0.3)
+	player.face_point(player.get_camera().global_position + crawl_ahead)
+	Input.action_press("crouch")
+	Input.action_press("move_forward")
+	var crouched_under := false
+	for i in 30:
+		await _wait(0.1)
+		var along := (player.global_position - crawl_from).dot(crawl_ahead)
+		crouched_under = crouched_under or (absf(along - 3.5) < 1.0 and player.global_position.y < crawl_from.y + 0.5)
+	Input.action_release("move_forward")
+	_check("crouching lowers your eyes and body", player.crouching and player.get_camera().global_position.y - player.global_position.y < 1.2)
+	player.global_position = ceiling.global_position - Vector3.UP * 1.5
+	await _wait(0.2)
+	Input.action_release("crouch")
+	await _wait(0.3)
+	var still_down := player.crouching
+	player.global_position = crawl_from
+	await _wait(0.3)
+	_check("crouching lets you pass under a low ceiling", not standing_under and crouched_under and still_down and not player.crouching,
+		"standing went under %s, crouched went under %s, stayed down under it %s" % [standing_under, crouched_under, still_down])
+	ceiling.queue_free()
 	player.spawn_at(room.spawn_position, room.spawn_yaw)
 	await _wait(0.3)
 
@@ -687,6 +740,30 @@ func _test_stages() -> void:
 	Input.action_release("move_forward")
 	var sea_depth := terrain.sea_depth(player.global_position.x, player.global_position.z)
 	_check("the sea pushes you back to the beach", sea_depth < 2.6, "%.1f m deep" % sea_depth)
+	# 横も海：最初のステージの横へ離れると、海岸に出て、その先は海（霧ではなく、海が行き止まり）
+	var middle0 := MountainChain.plain_starts[0].lerp(MountainChain.plain_ends[0], 0.5)
+	var side0 := (MountainChain.plain_ends[0] - MountainChain.plain_starts[0]).normalized().orthogonal()
+	var coast_depths: Array[String] = []
+	var sea_on_both_sides := true
+	for sign_value: float in [-1.0, 1.0]:
+		var far_out := middle0
+		while MountainChain.core_distance(0, far_out.x, far_out.y) < Terrain.COAST.y + 30.0:
+			far_out += side0 * sign_value * 5.0  # 最初のステージの広がりから、海岸の先まで横へ離れる
+		var depth_there := terrain.sea_depth(far_out.x, far_out.y)
+		coast_depths.append("%.1f" % depth_there)
+		sea_on_both_sides = sea_on_both_sides and depth_there > 2.6 and fog.depth_into(Vector3(far_out.x, 0.0, far_out.y)) < 0.0
+	_check("both sides of the first stage end at the sea, not in fog", sea_on_both_sides, "depths %s" % [coast_depths])
+	var side_wade := middle0
+	while terrain.sea_depth(side_wade.x, side_wade.y) < 0.3:
+		side_wade += side0 * 2.0  # 横の波打ち際まで
+	player.spawn_at(Vector3(side_wade.x, maxf(terrain.height_at(side_wade.x, side_wade.y), Terrain.SEA_LEVEL - 0.6) + 0.3, side_wade.y), 0.0)
+	await _wait(0.3)
+	player.face_point(player.get_camera().global_position + Vector3(side0.x, 0.0, side0.y))
+	Input.action_press("move_forward")
+	await _wait(4.0)
+	Input.action_release("move_forward")
+	sea_depth = terrain.sea_depth(player.global_position.x, player.global_position.z)
+	_check("the sea at the side pushes you back to land", sea_depth < 2.6, "%.1f m deep" % sea_depth)
 	# 見えない壁：山頂のたき火をともすまで、次の平地へは歩いて進めない
 	var gate := MountainChain.gate_point(1)
 	var ahead := MountainChain.gate_direction(1)
@@ -1029,6 +1106,36 @@ func _test_physics_items() -> void:
 	_tap("interact")
 	await _wait(0.2)
 	_check("E picks it up again", inventory.count_of(Items.Kind.CHOCOLATE) == 1 and not is_instance_valid(item))
+	# 地面を突き抜けたナタや、大岩に埋まったナタは、上へ出てきて、また拾える
+	var here := player.global_position
+	var buried := _main.features.spawn_item(Items.Kind.NATA, Vector3(here.x + 1.0, terrain.height_at(here.x + 1.0, here.z) - 2.0, here.z), Vector3.ZERO)
+	var inside_rock := Vector3.INF
+	for cell: Array in (terrain.get("_rock_cells") as Dictionary).values():
+		for rock: Array in cell:
+			if (rock[1] as Vector3).distance_to(here) < 120.0 and float(rock[3]) > 4.0:
+				inside_rock = rock[1]
+				break
+		if inside_rock.is_finite():
+			break
+	var stuck: Pickup = null
+	if inside_rock.is_finite():
+		stuck = _main.features.spawn_item(Items.Kind.NATA, inside_rock, Vector3.ZERO)
+	await _wait(1.0)
+	var surface := terrain.height_at(buried.global_position.x, buried.global_position.z)
+	_check("a machete that fell through the ground comes back up", buried.global_position.y > surface - 0.3, "%.1f m vs ground %.1f" % [buried.global_position.y, surface])
+	if stuck:
+		_check("a machete stuck inside a boulder comes back out", not terrain.inside_rock(stuck.global_position) and stuck.global_position.y > inside_rock.y,
+			"%.1f m above the rock's center" % (stuck.global_position.y - inside_rock.y))
+		stuck.queue_free()
+	player.global_position = buried.global_position + Vector3(1.2, 0.2, 0.0)
+	player.velocity = Vector3.ZERO
+	await _wait(0.2)
+	player.face_point(buried.global_position)
+	await _wait(0.1)
+	var had := inventory.count_of(Items.Kind.NATA)
+	player.interact()
+	await _wait(0.1)
+	_check("the machete can be picked up again", inventory.count_of(Items.Kind.NATA) == had + 1, player.aim_hint())
 
 	# 火をつけた発煙筒のまわりには、化け物が入れない
 	player.pick_up(Items.Kind.FLARE)
@@ -1423,8 +1530,9 @@ func _test_new_enemies() -> void:
 	_check("monsters stay away from a lit campfire", player.injury == injury)
 	worm.stop()
 	fire.set_lit(false)
-	# 鬼火：触れると冷える（たき火の守りの外で）
-	player.spawn_at(snow_spot, 0.0)
+	# 鬼火：触れると冷える（たき火から離れた、平地の中ほどで。たき火のそばは一息つける場所なので、化け物は消える）
+	var open_field := MountainChain.plain_starts[0].lerp(MountainChain.plain_ends[0], 0.45)
+	player.spawn_at(Vector3(open_field.x, terrain.height_at(open_field.x, open_field.y) + 0.5, open_field.y), 0.0)
 	await _wait(0.3)
 	var wisp := enemies.onibi[1]
 	wisp.appear(player.global_position + Vector3(2.0, 1.3, 0.0), player)
@@ -1956,6 +2064,46 @@ func _test_fly() -> void:
 	await _wait(0.3)
 	_check("landing after flying does no harm", not player.flying and not player.frozen and player.injury == 0.0 and player.is_on_floor(),
 		"injury %.1f" % player.injury)
+
+
+## 見えない壁：前へ歩く・跳ぶ・壁をつかんで登る、をどこで試しても、火をともすまで次のステージへは入れない
+func _test_gate_leak() -> void:
+	_section("gate leak")
+	await _restart(false)
+	var player := _main.player
+	var terrain := _main.terrain
+	var gate := MountainChain.gate_point(1)
+	var ahead := MountainChain.gate_direction(1)
+	var across := ahead.orthogonal()
+	var leaks: Array[String] = []
+	var tries := 0
+	for lateral: float in [-50.0, -25.0, 0.0, 25.0, 50.0]:
+		var start := gate + across * lateral - ahead * 3.0
+		var ground := terrain.height_at(start.x, start.y)
+		terrain.ensure_collision(Vector3(start.x, ground, start.y), 30.0)
+		player.spawn_at(Vector3(start.x, ground + 0.5, start.y), 0.0)
+		await _wait(0.2)
+		for mode in ["walk", "climb"]:
+			tries += 1
+			player.spawn_at(Vector3(start.x, ground + 0.5, start.y), 0.0)
+			player.face_point(player.get_camera().global_position + Vector3(ahead.x, 0.0, ahead.y))
+			Input.action_press("move_forward")
+			if mode == "climb":
+				Input.action_press("grab")
+			var furthest := -INF
+			for i in 60:
+				if i % 5 == 0:
+					Input.action_press("jump")
+				elif i % 5 == 1:
+					Input.action_release("jump")
+				await _wait(0.1)
+				furthest = maxf(furthest, MountainChain.past_gate(1, player.global_position.x, player.global_position.z))
+			Input.action_release("move_forward")
+			Input.action_release("grab")
+			Input.action_release("jump")
+			if furthest > FogBanks.PASS_MARGIN + 1.0:
+				leaks.append("%s at %+.0f m: %.1f m past" % [mode, lateral, furthest])
+	_check("nobody gets past the invisible wall before the fire is lit", leaks.is_empty(), "%d tries, leaks %s" % [tries, leaks])
 
 
 func _test_menu() -> void:

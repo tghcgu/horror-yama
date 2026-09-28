@@ -1,7 +1,7 @@
 class_name CritterDirector
 extends Node3D
 ## 山の動物を、プレイヤーのまわりに出したり片づけたりする。地帯ごとに、住んでいる動物が違う。
-##   樹海：シカ・タヌキ・ウサギ・カラス、イノシシ・人熊（めったに出ない）・野犬（夜はホタルも飛ぶ）
+##   樹海：シカ・タヌキ・ウサギ・カラス、イノシシ・人熊（めったに出ない。一度出たら 8〜12 分は出ない）・野犬（夜はホタルも飛ぶ）
 ##   岩場：カモシカ・タカ、人熊（めったに出ない）・野犬
 ##   雪山：ニホンザル・ライチョウ・ユキウサギ、野犬
 ## 野犬の群れは、夕暮れから夜にだけうろつく。
@@ -11,10 +11,12 @@ extends Node3D
 const MAX_CRITTERS := 16
 const SPAWN_DISTANCE := Vector2(24.0, 42.0)
 const DESPAWN_DISTANCE := 75.0
+const BEAR_GAP := Vector2(480.0, 720.0)  # 人熊が一度出たら、次に出られるようになるまで (s)。めったに出会わない
+const BEAR_FIRST := 180.0                # 島に着いてから、最初の人熊が出られるようになるまで (s)
 const LIFE := {  # 地帯 → [動物, 群れの数の範囲, 出やすさ]
 	Biomes.Id.FOREST: [["deer", Vector2i(2, 4), 3.0], ["tanuki", Vector2i(1, 2), 2.0], ["rabbit", Vector2i(1, 3), 2.5], ["crow", Vector2i(3, 5), 2.0],
-		["boar", Vector2i(1, 2), 1.2], ["bear", Vector2i(1, 1), 0.2], ["dog", Vector2i(2, 3), 0.9]],
-	Biomes.Id.CRAG: [["serow", Vector2i(1, 3), 3.0], ["hawk", Vector2i(1, 1), 1.0], ["bear", Vector2i(1, 1), 0.25], ["dog", Vector2i(2, 3), 0.8]],
+		["boar", Vector2i(1, 2), 1.2], ["bear", Vector2i(1, 1), 0.1], ["dog", Vector2i(2, 3), 0.9]],
+	Biomes.Id.CRAG: [["serow", Vector2i(1, 3), 3.0], ["hawk", Vector2i(1, 1), 1.0], ["bear", Vector2i(1, 1), 0.12], ["dog", Vector2i(2, 3), 0.8]],
 	Biomes.Id.SNOW: [["monkey", Vector2i(3, 5), 3.0], ["ptarmigan", Vector2i(2, 4), 2.0], ["snowhare", Vector2i(1, 2), 2.0], ["dog", Vector2i(2, 4), 0.9]],
 	Biomes.Id.SUMMIT: [["fox", Vector2i(1, 1), 1.5], ["crow", Vector2i(3, 6), 2.5]],
 }
@@ -29,6 +31,7 @@ var enabled := false
 
 var _critters: Array[Critter] = []
 var bear: Hitokuma  # 人熊（一度に一頭だけ）
+var bear_wait := BEAR_FIRST  # これが 0 になるまで、人熊は出ない
 var _check := 1.0
 var _fireflies: CPUParticles3D
 
@@ -63,6 +66,7 @@ func clear() -> void:
 	if bear and is_instance_valid(bear):
 		bear.queue_free()
 	bear = null
+	bear_wait = BEAR_FIRST
 
 
 func critters() -> Array[Critter]:
@@ -91,6 +95,7 @@ func _physics_process(delta: float) -> void:
 		bear = null
 	if not enabled:
 		return
+	bear_wait = maxf(bear_wait - delta, 0.0)
 	_check -= delta
 	if _check > 0.0:
 		return
@@ -101,7 +106,7 @@ func _physics_process(delta: float) -> void:
 
 ## 人熊を、少し遠くの歩ける地面に出す（一度に一頭だけ。守りの円の中にいるときは出さない）
 func _spawn_bear(biome: int) -> int:
-	if bear and is_instance_valid(bear) or Ward.blocks(get_tree(), player.global_position):
+	if bear and is_instance_valid(bear) or bear_wait > 0.0 or Ward.blocks(get_tree(), player.global_position):
 		return 0
 	for attempt in 10:
 		var angle := randf() * TAU
@@ -116,6 +121,7 @@ func _spawn_bear(biome: int) -> int:
 		bear = Hitokuma.new()
 		add_child(bear)
 		bear.setup(Vector3(x, y, z), player, terrain)
+		bear_wait = randf_range(BEAR_GAP.x, BEAR_GAP.y)
 		return 1
 	return 0
 

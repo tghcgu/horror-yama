@@ -69,6 +69,7 @@ var _run_nodes: Array[Node] = []  # やり直しで片づけるもの（アイ�
 var _lanterns: Array[OmniLight3D] = []
 var _time := 0.0
 var _cedars: Array[Transform3D] = []
+var _loot := RandomNumberGenerator.new()  # 箱や遺品の中身を選ぶ（置き場所は毎回同じでも、中身は遊ぶたびに変わる）
 var _stage := -1  # いま作っているステージ（_ledges と _walls は、このステージからだけ点を選ぶ）
 var _stage_content := [[], [], [], []]  # ステージ → そのステージを作ったときに置いた物（もう戻れなくなったら消す）
 var _built_stages := [false, false, false, false]
@@ -82,6 +83,7 @@ var _prop_spots := PackedVector3Array()   # 山の上の造形物を置いた場
 func build(terrain: Terrain, player: Player) -> void:
 	_terrain = terrain
 	_player = player
+	_loot.randomize()
 	_add_campfires()
 	_clearings.append(_terrain.summit_position)
 	for pit in _terrain.pits:
@@ -180,21 +182,21 @@ func _add_boxes(stage: int) -> void:
 	rng.seed = _terrain.run_seed + 100 + stage * 7919
 	for point in _ledges(rng, PICKUPS_PER_BIOME[stage], stage, 12.0, 1, _clearings, 3.0, 5.0, 0.74):
 		# アイテムは箱に入れて置く（ひとつの箱に 1〜2 個）
-		var items: Array[int] = [Items.pick_random(rng)]
-		if rng.randf() < 0.3:
-			items.append(Items.pick_random(rng))
+		var items: Array[int] = [Items.pick_random(_loot)]
+		if _loot.randf() < 0.3:
+			items.append(Items.pick_random(_loot))
 		_add_box(items, stage, Transform3D(Basis(Vector3.UP, rng.randf() * TAU), point - Vector3.UP * 0.05))
 	# 山の上にも、登る途中で見つかるように箱を置く（中身はひとつ、ときどきふたつ）
 	var above: float = MountainChain.bases[stage] + MOUNTAIN_ABOVE
 	for point in _ledges(rng, MOUNTAIN_BOXES[stage], stage, 14.0, 1, _clearings + _prop_spots, 3.0, above, 0.72):
-		var items: Array[int] = [Items.pick_random(rng)]
-		if rng.randf() < 0.2:
-			items.append(Items.pick_random(rng))
+		var items: Array[int] = [Items.pick_random(_loot)]
+		if _loot.randf() < 0.2:
+			items.append(Items.pick_random(_loot))
 		_add_box(items, stage, Transform3D(Basis(Vector3.UP, rng.randf() * TAU), point - Vector3.UP * 0.05))
 	# ビバーク跡の石垣の中や、墜落したヘリのそばには、置いていかれた箱
 	for spot in _loot_spots:
 		if _terrain.stage_of(spot.origin) == stage:
-			var items: Array[int] = [Items.pick_random(rng), Items.pick_random(rng)]
+			var items: Array[int] = [Items.pick_random(_loot), Items.pick_random(_loot)]
 			_add_box(items, stage, spot)
 
 
@@ -211,6 +213,7 @@ func _add_box(items: Array[int], style: int, xform: Transform3D) -> void:
 func spawn_item(kind: int, origin: Vector3, velocity: Vector3, activated := false) -> Pickup:
 	var pickup := Pickup.new()
 	pickup.setup(kind, activated)
+	pickup.ground = _terrain
 	add_child(pickup)
 	_limit_draw_distance(pickup)
 	pickup.global_position = origin
@@ -848,7 +851,7 @@ func _add_structures(rng: RandomNumberGenerator) -> void:
 				# 小屋の中には、アイテムの箱がひとつ
 				var box := ItemBox.new()
 				add_child(box)
-				var items: Array[int] = [Items.pick_random(rng), Items.pick_random(rng)]
+				var items: Array[int] = [Items.pick_random(_loot), Items.pick_random(_loot)]
 				box.setup(items, stage, self)
 				box.global_transform = built.global_transform.translated_local(Vector3(0.8, 0.37, -1.2))
 
@@ -1121,7 +1124,7 @@ func _too_close_to(p: Vector3, points: PackedVector3Array, distance: float) -> b
 func _add_belongings(t: Transform3D) -> void:
 	var stage := _terrain.stage_of(t.origin)
 	var belongings := Harvestable.new()
-	belongings.kind = Items.pick_random(RandomNumberGenerator.new())
+	belongings.kind = Items.pick_random(_loot)
 	belongings.amount = Vector2i(1, 1)
 	belongings.regrow = INF
 	belongings.label = "遺品をさがす"
