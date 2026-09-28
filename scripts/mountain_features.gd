@@ -338,7 +338,7 @@ func _add_flora(rng: RandomNumberGenerator) -> void:
 		_add_shape(colliders, Transform3D(t.basis, t.origin + t.basis * Vector3(0.0, 0.33, 0.0)), box)
 	# 崖の松：樹海の山と岩場の、斜面に根を張る
 	for biome in [forest, crag]:
-		var ledges := _ledges(rng, 200, biome, 5.0, 0, avoid, KEEP_CLEAR, 12.0, 0.45)
+		var ledges := _ledges(rng, 200, biome, 5.0, 0, avoid, KEEP_CLEAR, 12.0, 0.66)  # （もっと急な所は、岩におおわれている）
 		var on_slopes := PackedVector3Array()
 		for p in ledges:
 			if _terrain.normal_at(p.x, p.z).y < 0.9:

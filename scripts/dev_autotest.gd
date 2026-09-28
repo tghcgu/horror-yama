@@ -109,6 +109,8 @@ func _run() -> void:
 		await _test_menu()
 	if _wants("gate_leak"):
 		await _test_gate_leak()
+	if _wants("bare_walls"):
+		await _test_bare_walls()
 	_finish()
 
 
@@ -1538,7 +1540,11 @@ func _test_new_enemies() -> void:
 	wisp.appear(player.global_position + Vector3(2.0, 1.3, 0.0), player)
 	var chilled := [false]
 	player.chilled.connect(func() -> void: chilled[0] = true, CONNECT_ONE_SHOT)
-	await _wait(2.0)
+	for i in 50:  # ふわふわ寄ってくるので、届くまで少し待つ
+		await _wait(0.1)
+		if chilled[0]:
+			break
+	await _wait(0.1)
 	_check("onibi chill you", chilled[0] and not wisp.active)
 	if _shot_dir != "":
 		await _wait(0.1)
@@ -1908,12 +1914,21 @@ func _test_hunting() -> void:
 	# イノシシ：近づくと突進してきて、ケガをする（スタート地点のたき火の守りの外の、岩のない平らな所で）
 	var inland := MountainChain.plain_starts[0].lerp(MountainChain.plain_ends[0], 0.4)
 	var across := (MountainChain.plain_ends[0] - MountainChain.plain_starts[0]).normalized().orthogonal()
-	for k in 40:
-		var along := MountainChain.plain_starts[0].lerp(MountainChain.plain_ends[0], 0.3 + (k % 5) * 0.1) + across * (k / 5 - 4) * 8.0
+	var found := false
+	for k in 150:  # イノシシとの間が、平らで岩のない所を探す
+		var along := MountainChain.plain_starts[0].lerp(MountainChain.plain_ends[0], 0.2 + (k % 13) * 0.05) + across * (k / 13 - 5) * 6.0
 		var spot := Vector3(along.x, terrain.height_at(along.x, along.y), along.y)
-		if not terrain.near_rock(spot, 9.0) and terrain.normal_at(along.x, along.y).y > 0.9 and terrain.normal_at(along.x + 6.0, along.y).y > 0.85:
+		var clear := not terrain.near_rock(spot + Vector3.UP * 0.5, 1.5)
+		for step in 7:
+			var q := Vector3(along.x + step, 0.0, along.y)
+			q.y = terrain.height_at(q.x, q.z)
+			clear = clear and absf(q.y - spot.y) < 1.0 and not terrain.near_rock(q + Vector3.UP * 0.4, 0.8)
+		if clear:
 			inland = along
+			found = true
 			break
+	if not found:
+		_note("no clear field for the boar test")
 	var field := Vector3(inland.x, terrain.height_at(inland.x, inland.y) + 0.5, inland.y)
 	player.spawn_at(field, 0.0)
 	await _wait(0.3)
@@ -1991,7 +2006,8 @@ func _test_critters() -> void:
 	for attempt in 10:
 		director.spawn_group(Biomes.Id.FOREST)
 		for critter in director.critters():
-			if Critter.SPECIES[critter.species].kind in ["walker", "hopper"]:
+			var data: Dictionary = Critter.SPECIES[critter.species]
+			if data.kind in ["walker", "hopper"] and not data.has("hostile"):
 				walker = critter
 				break
 		if walker:
@@ -2004,7 +2020,7 @@ func _test_critters() -> void:
 			"%s is %s" % [walker.species, walker.state])
 	# 白ぎつねの道案内
 	director.clear()
-	var summit_plain := MountainChain.plain_starts[3].lerp(MountainChain.plain_ends[3], 0.3)
+	var summit_plain := _clear_ground(3, 3.0)
 	player.spawn_at(Vector3(summit_plain.x, terrain.height_at(summit_plain.x, summit_plain.y) + 0.5, summit_plain.y), 0.0)
 	await _wait(0.3)
 	var fox: Critter = null
@@ -2016,7 +2032,7 @@ func _test_critters() -> void:
 		if fox:
 			break
 	if fox:
-		fox.global_position = player.global_position + Vector3(3.0, 0.0, 0.0)
+		fox.global_position = player.global_position + Vector3(2.0, 0.0, 0.0)
 		fox.global_position.y = terrain.height_at(fox.global_position.x, fox.global_position.z)
 		var goal := director.guide_target
 		var before := Vector2(fox.global_position.x - goal.x, fox.global_position.z - goal.z).length()
@@ -2064,6 +2080,78 @@ func _test_fly() -> void:
 	await _wait(0.3)
 	_check("landing after flying does no harm", not player.flying and not player.frozen and player.injury == 0.0 and player.is_on_floor(),
 		"injury %.1f" % player.injury)
+
+
+## ステージ stage の平地で、まわり radius m に岩がなく、平らな所（動物のテスト用）
+func _clear_ground(stage: int, radius: float) -> Vector2:
+	var terrain := _main.terrain
+	var start := MountainChain.plain_starts[stage]
+	var end := MountainChain.plain_ends[stage]
+	var across := (end - start).normalized().orthogonal()
+	for k in 200:
+		var p := start.lerp(end, 0.15 + (k % 14) * 0.05) + across * (k / 14 - 7) * 5.0
+		var ground := Vector3(p.x, terrain.height_at(p.x, p.y), p.y)
+		if terrain.normal_at(p.x, p.y).y < 0.9 or terrain.near_rock(ground + Vector3.UP * 0.5, radius):
+			continue
+		return p
+	return start.lerp(end, 0.3)
+
+
+## 岩におおわれずに見えている壁（急な地面）が、どのステージにも残っていない
+func _test_bare_walls() -> void:
+	_section("bare walls")
+	await _restart()
+	var terrain := _main.terrain
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 3
+	var report: Array[String] = []
+	var worst := 0.0
+	for stage in MountainChain.COUNT:
+		var area := MountainChain.stage_rect(stage)
+		var steep := 0
+		var bare := 0
+		var examples: Array[String] = []
+		for n in 6000:
+			var x := rng.randf_range(area.position.x, area.end.x)
+			var z := rng.randf_range(area.position.y, area.end.y)
+			var normal := terrain.normal_at(x, z)
+			if normal.y > Terrain.GAP_STEEP or (normal.y > Terrain.GAP_STEEP_PLAIN and terrain.call("_on_plain", stage, x, z)):
+				continue  # 平地の凸凹は、壁ではない
+			var ground := Vector3(x, terrain.height_at(x, z), z)
+			if terrain.stage_of(ground) != stage or ground.y < Terrain.SEA_LEVEL + 0.5 or terrain.near_landing(x, z, -Terrain.LANDING_BLEND):
+				continue
+			if terrain.call("_near_pit", x, z, 1.0 - Terrain.PIT_FIELD):
+				continue  # 隠れクレバスの穴（穴なので、あけておく）
+			if Vector2(x, z).distance_to(MountainChain.centers[stage]) < Terrain.PLATEAU_RADIUS + 2.0:
+				continue
+			steep += 1
+			if not terrain.near_rock(ground + normal * 0.3, 0.8):  # 岩と岩のすき間（細い割れ目）は、壁とみなさない
+				bare += 1
+				if examples.size() < 3:
+					var elevation := (ground.y - MountainChain.bases[stage]) / (MountainChain.peaks[stage] - MountainChain.bases[stage])
+					var spawn: Vector3 = terrain.spawn_point()
+					examples.append("(%.0f, %.0f, %.0f) ny %.2f elev %.2f land %s spawn %.0f center %.0f pit %s rect %s" % [ground.x, ground.y, ground.z, normal.y, elevation,
+						terrain.near_landing(x, z, 0.0), Vector2(x, z).distance_to(Vector2(spawn.x, spawn.z)), Vector2(x, z).distance_to(MountainChain.centers[stage]),
+						terrain.call("_near_pit", x, z, 3.0), MountainChain.stage_rect(stage).has_point(Vector2(x, z))])
+		var share := float(bare) / maxf(steep, 1.0)
+		worst = maxf(worst, share)
+		report.append("stage %d: %d of %d steep spots bare %s" % [stage, bare, steep, examples])
+	_check("no bare walls are left on any stage", worst < 0.01, "%s" % [report])
+	# 平地は歩いて進む所：岩だらけにしない
+	var crowded: Array[String] = []
+	var worst_plain := 0.0
+	for stage in MountainChain.COUNT:
+		var start := MountainChain.plain_starts[stage]
+		var end := MountainChain.plain_ends[stage]
+		var across := (end - start).normalized().orthogonal()
+		var blocked := 0
+		for n in 400:
+			var q := start.lerp(end, rng.randf()) + across * rng.randf_range(-0.8, 0.8) * MountainChain.PLAIN_HALF_WIDTH
+			if terrain.near_rock(Vector3(q.x, terrain.height_at(q.x, q.y) + 0.5, q.y), 0.3):
+				blocked += 1
+		worst_plain = maxf(worst_plain, blocked / 400.0)
+		crowded.append("stage %d: %d%%" % [stage, blocked * 100 / 400])
+	_check("the plains stay open to walk on", worst_plain < 0.45, "%s" % [crowded])
 
 
 ## 見えない壁：前へ歩く・跳ぶ・壁をつかんで登る、をどこで試しても、火をともすまで次のステージへは入れない

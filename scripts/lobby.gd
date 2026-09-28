@@ -234,17 +234,17 @@ func _build_ice_cliff() -> void:
 	_sign(center + Vector3(0.0, 0.0, 6.5), "⑤ 氷の壁", "氷はつかんでも、すべってずり落ちる。\n道具置き場のアイゼンを使うと、しばらく滑らない。")
 
 
-## ⑥ 岩の塔：山と同じ、ごつごつした大岩の積み重なり
+## ⑥ 岩の塔：山と同じ、なめらかで複雑な形の大岩の積み重なり
 func _build_boulder_tower() -> void:
 	var material := _rock_material("rock_forest", "moss_top", 0.9)
-	material.set_shader_parameter("flat_shading", true)
+	material.set_shader_parameter("flat_shading", false)
 	material.set_shader_parameter("underside_dark", 0.62)
 	var base := Vector3(30.0, 0.0, -14.0)
 	var stack := [[4.6, Vector3(0.0, 2.6, 0.0)], [4.0, Vector3(1.4, 7.4, 0.8)], [3.4, Vector3(-0.8, 11.6, -0.6)],
 		[3.8, Vector3(-4.2, 3.0, 2.6)], [2.8, Vector3(0.6, 15.0, 0.4)], [3.0, Vector3(4.0, 3.2, -3.0)], [2.2, Vector3(-0.4, 17.8, 0.0)]]
 	for k in stack.size():
 		var r: float = stack[k][0]
-		var mesh := Terrain.blob_shape(10, 6, 700 + k * 37)
+		var mesh := Terrain.chunk_shape(14, 9, 700 + k * 37)
 		var instance := MeshInstance3D.new()
 		instance.mesh = mesh
 		instance.material_override = material

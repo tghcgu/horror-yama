@@ -16,6 +16,8 @@ uniform float underside_dark = 0.0;    // 下を向いた面を、これだけ�
 uniform sampler2D top_texture : source_color, filter_nearest, repeat_enable, hint_default_white;
 uniform float top_amount = 0.0;        // 上を向いた面をおおう物（苔・砂ぼこり・雪・灰）の濃さ
 uniform float macro_variation = 0.0;   // 同じ模様のくり返しが目立たないように、大きな周期で明るさをゆらす量
+uniform float detail_amount = 1.0;     // 模様の濃さ（小さいほど、模様の平均の色に近い、のっぺりした面になる）
+uniform vec3 texture_average : source_color = vec3(0.5);  // 模様の平均の色
 
 varying vec3 world_position;
 varying vec3 world_normal;
@@ -28,6 +30,7 @@ void vertex() {
 
 void fragment() {
 	vec3 tex = use_uv ? texture(albedo_texture, UV).rgb : psx_triplanar(albedo_texture, world_position * texture_scale, world_normal);
+	tex = mix(texture_average, tex, detail_amount);
 	ALBEDO = albedo * psx_saturate(tex, saturation) * (use_vertex_color ? COLOR.rgb : vec3(1.0));
 	if (flat_shading) {
 		vec3 n = normalize(cross(dFdx(VERTEX), dFdy(VERTEX)));
